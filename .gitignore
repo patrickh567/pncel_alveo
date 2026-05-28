@@ -1,0 +1,84 @@
+# =============================================================================
+# Vivado generated content
+# =============================================================================
+# Project build dirs (synth/impl runs, IP user files, caches, generated srcs).
+build/
+
+# Vivado per-process scratch (placement / routing DRC overlays etc).
+.Xil/
+**/.Xil/
+
+# Vivado runtime logs / journals (top-level + per-tool).
+vivado*.log
+vivado*.jou
+vivado*.backup.log
+vivado*.backup.jou
+vivado_pid*.str
+*.wbt
+*.wcfg
+*.wdb
+hs_err_pid*.log
+
+# Programming / configuration artifacts.
+*.bit
+*.bin
+*.mcs
+*.prm
+*.ltx
+*.dcp
+
+# =============================================================================
+# VCS simulation generated content
+# =============================================================================
+# `export_simulation` output trees + per-target re-exports.
+sim/export_vcs/
+sim/export_vcs_*/
+
+# VCS compile / elaborate scratch.
+csrc/
+**/csrc/
+*.daidir/
+**/*.daidir/
+
+# Compiled simv binaries.
+*_simv
+*_simv.exe
+
+# Sim runtime / dumps.
+ucli.key
+*.vpd
+*.fsdb
+*.vcd
+*.shm/
+verdiLog/
+novas*.*
+nWaveLog/
+DVEfiles/
+
+# Per-stage logs that the export_simulation .sh scripts emit.
+sim/*.log
+sim/**/*.log
+sim/output.txt
+
+# Stray top-level build log from an older flow.
+build_pncel.log
+
+# =============================================================================
+# Python (host/, host/tests/)
+# =============================================================================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# =============================================================================
+# Editor / OS
+# =============================================================================
+*.swp
+*.swo
+.DS_Store
+.idea/
+.vscode/
