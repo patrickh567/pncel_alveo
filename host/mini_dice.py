@@ -17,7 +17,7 @@ All address constants are derived directly from:
   /data2/pdh4/pncel_alveo/script/mini_dice_alveo_build.tcl:286-287
       `M02_SEG00_BASE_ADDR = 0x0000000400000000`
   /data2/pdh4/pncel_alveo/src/utility/vivado_ip/axil_host_switch.tcl
-      M02 SEG00 = 0x0010_0000 (axi_lite_fifo aperture)
+      M02 SEG00 = 0x0008_0000 (axi_lite_fifo aperture, 1 MB BAR layout)
   ~/repos/Mini_Dice_Backend/Mini_Dice/rtl/cgra_core/internal_memory/cgra_io_csr.sv
       REG_CTRL = 0xFF00, REG_STARTPC = 0xFF02, REG_STATUS = 0xFF04,
       REG_THREAD_COUNT = 0xFF0C, REG_CSRX0..7 = 0xFF10..0xFF1E
@@ -36,8 +36,13 @@ from xdma import XdmaC2H, XdmaH2C, XdmaUserBar
 class MiniDice:
 
     # -- AXI-Lite (BAR1) aperture ------------------------------------------
-    FIFO_BASE   = 0x0010_0000  # axil_host_switch.M02 SEG00 — CSR-write FIFO
-    REGMAP_BASE = 0x0011_0000  # axil_host_switch.M03 SEG00 — generic regmap
+    # 1 MB BAR (XDMA axilite_master_size=1).  Both apertures live inside
+    # axil_host_switch.M02 SEG00 (0x80000..0x9FFFF, 128 KB).  Kept in
+    # sync with `mini_dice_alveo_dynamic_region.sv:LITE_FIFO_BASE`,
+    # `mini_dice_zcu102_top.sv:LITE_FIFO_BASE`, all three
+    # `axi_lite_switch_xbar` IP TCLs, and the smoke/cta TBs.
+    FIFO_BASE   = 0x0008_0000  # CSR-write FIFO (chip CSR addr at low 16 b)
+    REGMAP_BASE = 0x0009_0000  # generic loopback regmap (16 × 4 B)
 
     # -- BRAM (DMA) base + region offsets -----------------------------------
     BRAM_DMA_BASE = 0x0000_0004_0000_0000  # axi_dma_switch.M02 SEG00

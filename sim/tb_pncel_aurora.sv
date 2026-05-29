@@ -139,8 +139,9 @@ module tb_pncel_aurora;
   localparam int  CHUNKS_PER_BEAT  = DATA_W / R_CHUNK_W;          // 4
 
   // Address windows
-  // axil_host_switch.M02 = 0x0010_0000..0x001F_FFFF -> bridge s_lite
-  localparam logic [31:0] AXIL_BRIDGE_BASE = 32'h0010_0000;
+  // axil_host_switch.M02 = 0x0008_0000..0x0009_FFFF -> bridge s_lite
+  // (re-packed for the 1 MB AXI-Lite BAR).
+  localparam logic [31:0] AXIL_BRIDGE_BASE = 32'h0008_0000;
   // axi_dma_switch.M00   = 0x0_0000_0000..0x1_FFFF_FFFF -> bridge s_full
   localparam logic [63:0] AXI_BRIDGE_BASE  = 64'h0000_0000_0000_0000;
 

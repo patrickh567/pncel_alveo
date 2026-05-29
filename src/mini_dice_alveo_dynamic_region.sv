@@ -1622,14 +1622,15 @@ module mini_dice_alveo_dynamic_region import VX_gpu_pkg::*; (
   localparam int             LITE_STRB_W     = LITE_DATA_W / 8;          // 4
   // axi_lite_fifo BASE_ADDR — the IP matches `awaddr[31:16] ==
   // BASE_ADDR[31:16]`, so the lower 16 b of the host AXI address become
-  // the OP_WRITE packet's `addr` field.  We park the FIFO at 0x0010_0000
-  // (within axil_host_switch.M02 SEG00 = 0x0010_0000..0x001F_FFFF) so a
-  // host write to 0x0010_FF02 carries packet addr=0xFF02 — the chip's
-  // REG_STARTPC.  Must agree with axi_lite_switch_xbar's M00_A00_BASE.
-  localparam [LITE_ADDR_W-1:0] LITE_FIFO_BASE = 32'h0010_0000;
-  // Regmap moved to 0x0011_0000 so it doesn't overlap the FIFO's 16-bit
-  // aperture.  Must agree with axi_lite_switch_xbar's M01_A00_BASE.
-  localparam [LITE_ADDR_W-1:0] LITE_REGS_BASE = 32'h0011_0000;
+  // the OP_WRITE packet's `addr` field.  Parked at 0x0008_0000 inside
+  // axil_host_switch.M02 SEG00 (0x0008_0000..0x0009_FFFF) so a host
+  // write to 0x0008_FF02 carries packet addr=0xFF02 (REG_STARTPC).
+  // The 0x80000 base matches pncel_alveo/host/mini_dice.py:FIFO_BASE
+  // and the 1 MB BAR's compact address map.
+  localparam [LITE_ADDR_W-1:0] LITE_FIFO_BASE = 32'h0008_0000;
+  // Regmap at 0x0009_0000 (next 64 KB block) — doesn't overlap the
+  // FIFO's 16-bit aperture.  Matches mini_dice.py:REGMAP_BASE.
+  localparam [LITE_ADDR_W-1:0] LITE_REGS_BASE = 32'h0009_0000;
   localparam int             LITE_NUM_REGS   = 16;
 
   // -- Bridge-side wires (wide: DATA_W = AXI_DATA_WIDTH) declared above the

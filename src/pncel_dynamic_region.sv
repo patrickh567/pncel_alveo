@@ -83,6 +83,19 @@
   output wire              PFX``_rvalid,              \
   input  wire              PFX``_rready
 
+`define AXI_SLAVE_TIEOFF(PFX)           \
+  assign PFX``_awready = 1'b0;          \
+  assign PFX``_wready  = 1'b0;          \
+  assign PFX``_bid     = '0;            \
+  assign PFX``_bresp   = 2'b00;         \
+  assign PFX``_bvalid  = 1'b0;          \
+  assign PFX``_arready = 1'b0;          \
+  assign PFX``_rid     = '0;            \
+  assign PFX``_rdata   = '0;            \
+  assign PFX``_rresp   = 2'b00;         \
+  assign PFX``_rlast   = 1'b0;          \
+  assign PFX``_rvalid  = 1'b0
+
 module pncel_dynamic_region (
   input wire aclk,
   input wire aresetn,
@@ -500,9 +513,59 @@ module pncel_dynamic_region (
   wire         df_m_rvalid;
   wire         df_m_rready;
 
+  // ---------------------------------------------------------------------
+  // Phase-2 host-preload tunnel: in combined_sim, the host-preload
+  // path (sim_axi_dma → axi_dma_switch.M02 → s_axi_hbm) is re-routed
+  // to feed the aurora bridge instead of terminating at the local
+  // axi_crossbar_bram (the chip's BRAM now lives on zcu102).  When
+  // PHASE2_HOST_PRELOAD_OVER_AURORA is defined, the CDC's slave port
+  // is driven by s_axi_hbm_*; in the default FPGA build it stays
+  // wired to s_axi_data_* as before.
+  // ---------------------------------------------------------------------
   axi_clock_converter_data u_axi_cdc_data (
     .s_axi_aclk     (aclk),
     .s_axi_aresetn  (aresetn),
+`ifdef PHASE2_HOST_PRELOAD_OVER_AURORA
+    .s_axi_awid     (s_axi_hbm_awid),
+    .s_axi_awaddr   (s_axi_hbm_awaddr),
+    .s_axi_awlen    (s_axi_hbm_awlen),
+    .s_axi_awsize   (s_axi_hbm_awsize),
+    .s_axi_awburst  (s_axi_hbm_awburst),
+    .s_axi_awlock   (s_axi_hbm_awlock),
+    .s_axi_awcache  (s_axi_hbm_awcache),
+    .s_axi_awprot   (s_axi_hbm_awprot),
+    .s_axi_awqos    (s_axi_hbm_awqos),
+    .s_axi_awregion (s_axi_hbm_awregion),
+    .s_axi_awvalid  (s_axi_hbm_awvalid),
+    .s_axi_awready  (s_axi_hbm_awready),
+    .s_axi_wdata    (s_axi_hbm_wdata),
+    .s_axi_wstrb    (s_axi_hbm_wstrb),
+    .s_axi_wlast    (s_axi_hbm_wlast),
+    .s_axi_wvalid   (s_axi_hbm_wvalid),
+    .s_axi_wready   (s_axi_hbm_wready),
+    .s_axi_bid      (s_axi_hbm_bid),
+    .s_axi_bresp    (s_axi_hbm_bresp),
+    .s_axi_bvalid   (s_axi_hbm_bvalid),
+    .s_axi_bready   (s_axi_hbm_bready),
+    .s_axi_arid     (s_axi_hbm_arid),
+    .s_axi_araddr   (s_axi_hbm_araddr),
+    .s_axi_arlen    (s_axi_hbm_arlen),
+    .s_axi_arsize   (s_axi_hbm_arsize),
+    .s_axi_arburst  (s_axi_hbm_arburst),
+    .s_axi_arlock   (s_axi_hbm_arlock),
+    .s_axi_arcache  (s_axi_hbm_arcache),
+    .s_axi_arprot   (s_axi_hbm_arprot),
+    .s_axi_arqos    (s_axi_hbm_arqos),
+    .s_axi_arregion (s_axi_hbm_arregion),
+    .s_axi_arvalid  (s_axi_hbm_arvalid),
+    .s_axi_arready  (s_axi_hbm_arready),
+    .s_axi_rid      (s_axi_hbm_rid),
+    .s_axi_rdata    (s_axi_hbm_rdata),
+    .s_axi_rresp    (s_axi_hbm_rresp),
+    .s_axi_rlast    (s_axi_hbm_rlast),
+    .s_axi_rvalid   (s_axi_hbm_rvalid),
+    .s_axi_rready   (s_axi_hbm_rready),
+`else
     .s_axi_awid     (s_axi_data_awid),
     .s_axi_awaddr   (s_axi_data_awaddr),
     .s_axi_awlen    (s_axi_data_awlen),
@@ -542,6 +605,7 @@ module pncel_dynamic_region (
     .s_axi_rlast    (s_axi_data_rlast),
     .s_axi_rvalid   (s_axi_data_rvalid),
     .s_axi_rready   (s_axi_data_rready),
+`endif
 
     .m_axi_aclk     (aurora_user_clk),
     .m_axi_aresetn  (bridge_aresetn),
@@ -585,6 +649,13 @@ module pncel_dynamic_region (
     .m_axi_rvalid   (df_m_rvalid),
     .m_axi_rready   (df_m_rready)
   );
+
+`ifdef PHASE2_HOST_PRELOAD_OVER_AURORA
+  // s_axi_data is unused in this build (s_axi_hbm drives the CDC
+  // above instead).  Tie off its slave-side outputs so the partition
+  // port still presents a valid AXI4 slave.
+  `AXI_SLAVE_TIEOFF(s_axi_data);
+`endif
 
   // ---------------------------------------------------------------------
   // AXI-Lite clock converter — XDMA control (aclk) → bridge (user_clk).
@@ -669,11 +740,9 @@ module pncel_dynamic_region (
   assign s_axil_ctrl_rlast   = 1'b1;
 
   // ---------------------------------------------------------------------
-  // axi_dwidth_xdma_to_bridge — narrow the XDMA-side 256 b AXI4 down to
-  // the bridge's 128 b s_full slave.  Bridge DATA_W is 128 (not 256)
-  // because axi_lite_to_aurora packs its read-response into the 256-bit
-  // user-K word as {op[7:0], resp[1:0], data[DATA_W-1:0]} — DATA_W=256
-  // would need a 266-bit packet and overflow the user-K word.
+  // axi_dwidth_xdma_to_bridge — widen the XDMA-side 256 b AXI4 up to
+  // the bridge's 512 b s_full slave (bridge DATA_W is harmonised with
+  // the zcu102 endpoint at 512; see u_bridge instantiation below).
   // ---------------------------------------------------------------------
   wire [3:0]   bd_s_awid;
   wire [63:0]  bd_s_awaddr;
@@ -684,8 +753,8 @@ module pncel_dynamic_region (
   wire [2:0]   bd_s_awprot;
   wire         bd_s_awvalid;
   wire         bd_s_awready;
-  wire [127:0] bd_s_wdata;
-  wire [15:0]  bd_s_wstrb;
+  wire [511:0] bd_s_wdata;
+  wire [63:0]  bd_s_wstrb;
   wire         bd_s_wlast;
   wire         bd_s_wvalid;
   wire         bd_s_wready;
@@ -703,7 +772,7 @@ module pncel_dynamic_region (
   wire         bd_s_arvalid;
   wire         bd_s_arready;
   wire [3:0]   bd_s_rid;
-  wire [127:0] bd_s_rdata;
+  wire [511:0] bd_s_rdata;
   wire [1:0]   bd_s_rresp;
   wire         bd_s_rlast;
   wire         bd_s_rvalid;
@@ -1277,48 +1346,159 @@ module pncel_dynamic_region (
   wire         xb_m_axi_rvalid;
   wire         xb_m_axi_rready;
 
+  // Phase-2: s_axi_hbm is consumed by the bridge CDC (see top of file)
+  // so its connection to crossbar SI[1] is replaced by an inactive
+  // tie-off here.  Shadow wires `xb_si1_*` mux between the live HBM
+  // master and zero based on PHASE2_HOST_PRELOAD_OVER_AURORA so the
+  // crossbar instantiation below stays a single block.
+  wire [3:0]   xb_si1_awid;
+  wire [63:0]  xb_si1_awaddr;
+  wire [7:0]   xb_si1_awlen;
+  wire [2:0]   xb_si1_awsize;
+  wire [1:0]   xb_si1_awburst;
+  wire         xb_si1_awlock;
+  wire [3:0]   xb_si1_awcache;
+  wire [2:0]   xb_si1_awprot;
+  wire [3:0]   xb_si1_awqos;
+  wire         xb_si1_awvalid;
+  wire         xb_si1_awready;
+  wire [255:0] xb_si1_wdata;
+  wire [31:0]  xb_si1_wstrb;
+  wire         xb_si1_wlast;
+  wire         xb_si1_wvalid;
+  wire         xb_si1_wready;
+  wire [3:0]   xb_si1_bid;
+  wire [1:0]   xb_si1_bresp;
+  wire         xb_si1_bvalid;
+  wire         xb_si1_bready;
+  wire [3:0]   xb_si1_arid;
+  wire [63:0]  xb_si1_araddr;
+  wire [7:0]   xb_si1_arlen;
+  wire [2:0]   xb_si1_arsize;
+  wire [1:0]   xb_si1_arburst;
+  wire         xb_si1_arlock;
+  wire [3:0]   xb_si1_arcache;
+  wire [2:0]   xb_si1_arprot;
+  wire [3:0]   xb_si1_arqos;
+  wire         xb_si1_arvalid;
+  wire         xb_si1_arready;
+  wire [3:0]   xb_si1_rid;
+  wire [255:0] xb_si1_rdata;
+  wire [1:0]   xb_si1_rresp;
+  wire         xb_si1_rlast;
+  wire         xb_si1_rvalid;
+  wire         xb_si1_rready;
+`ifdef PHASE2_HOST_PRELOAD_OVER_AURORA
+  // Inactive — s_axi_hbm goes to the bridge, not here.
+  assign xb_si1_awid    = '0;
+  assign xb_si1_awaddr  = '0;
+  assign xb_si1_awlen   = '0;
+  assign xb_si1_awsize  = '0;
+  assign xb_si1_awburst = '0;
+  assign xb_si1_awlock  = 1'b0;
+  assign xb_si1_awcache = '0;
+  assign xb_si1_awprot  = '0;
+  assign xb_si1_awqos   = '0;
+  assign xb_si1_awvalid = 1'b0;
+  assign xb_si1_wdata   = '0;
+  assign xb_si1_wstrb   = '0;
+  assign xb_si1_wlast   = 1'b0;
+  assign xb_si1_wvalid  = 1'b0;
+  assign xb_si1_bready  = 1'b1;
+  assign xb_si1_arid    = '0;
+  assign xb_si1_araddr  = '0;
+  assign xb_si1_arlen   = '0;
+  assign xb_si1_arsize  = '0;
+  assign xb_si1_arburst = '0;
+  assign xb_si1_arlock  = 1'b0;
+  assign xb_si1_arcache = '0;
+  assign xb_si1_arprot  = '0;
+  assign xb_si1_arqos   = '0;
+  assign xb_si1_arvalid = 1'b0;
+  assign xb_si1_rready  = 1'b1;
+`else
+  assign xb_si1_awid    = s_axi_hbm_awid;
+  assign xb_si1_awaddr  = s_axi_hbm_awaddr;
+  assign xb_si1_awlen   = s_axi_hbm_awlen;
+  assign xb_si1_awsize  = s_axi_hbm_awsize;
+  assign xb_si1_awburst = s_axi_hbm_awburst;
+  assign xb_si1_awlock  = s_axi_hbm_awlock;
+  assign xb_si1_awcache = s_axi_hbm_awcache;
+  assign xb_si1_awprot  = s_axi_hbm_awprot;
+  assign xb_si1_awqos   = s_axi_hbm_awqos;
+  assign xb_si1_awvalid = s_axi_hbm_awvalid;
+  assign s_axi_hbm_awready = xb_si1_awready;
+  assign xb_si1_wdata   = s_axi_hbm_wdata;
+  assign xb_si1_wstrb   = s_axi_hbm_wstrb;
+  assign xb_si1_wlast   = s_axi_hbm_wlast;
+  assign xb_si1_wvalid  = s_axi_hbm_wvalid;
+  assign s_axi_hbm_wready = xb_si1_wready;
+  assign s_axi_hbm_bid    = xb_si1_bid;
+  assign s_axi_hbm_bresp  = xb_si1_bresp;
+  assign s_axi_hbm_bvalid = xb_si1_bvalid;
+  assign xb_si1_bready  = s_axi_hbm_bready;
+  assign xb_si1_arid    = s_axi_hbm_arid;
+  assign xb_si1_araddr  = s_axi_hbm_araddr;
+  assign xb_si1_arlen   = s_axi_hbm_arlen;
+  assign xb_si1_arsize  = s_axi_hbm_arsize;
+  assign xb_si1_arburst = s_axi_hbm_arburst;
+  assign xb_si1_arlock  = s_axi_hbm_arlock;
+  assign xb_si1_arcache = s_axi_hbm_arcache;
+  assign xb_si1_arprot  = s_axi_hbm_arprot;
+  assign xb_si1_arqos   = s_axi_hbm_arqos;
+  assign xb_si1_arvalid = s_axi_hbm_arvalid;
+  assign s_axi_hbm_arready = xb_si1_arready;
+  assign s_axi_hbm_rid    = xb_si1_rid;
+  assign s_axi_hbm_rdata  = xb_si1_rdata;
+  assign s_axi_hbm_rresp  = xb_si1_rresp;
+  assign s_axi_hbm_rlast  = xb_si1_rlast;
+  assign s_axi_hbm_rvalid = xb_si1_rvalid;
+  assign xb_si1_rready  = s_axi_hbm_rready;
+`endif
+
   axi_crossbar_bram u_xbar_bram (
     .aclk     (aclk),
     .aresetn  (aresetn),
 
-    // SI = {SI[1]=s_axi_hbm_*, SI[0]=cdc_out_*} per Xilinx concat order.
-    .s_axi_awid     ({s_axi_hbm_awid,     cdc_out_awid}),
-    .s_axi_awaddr   ({s_axi_hbm_awaddr,   cdc_out_awaddr}),
-    .s_axi_awlen    ({s_axi_hbm_awlen,    cdc_out_awlen}),
-    .s_axi_awsize   ({s_axi_hbm_awsize,   cdc_out_awsize}),
-    .s_axi_awburst  ({s_axi_hbm_awburst,  cdc_out_awburst}),
-    .s_axi_awlock   ({s_axi_hbm_awlock,   cdc_out_awlock}),
-    .s_axi_awcache  ({s_axi_hbm_awcache,  cdc_out_awcache}),
-    .s_axi_awprot   ({s_axi_hbm_awprot,   cdc_out_awprot}),
-    .s_axi_awqos    ({s_axi_hbm_awqos,    4'b0}),
-    .s_axi_awvalid  ({s_axi_hbm_awvalid,  cdc_out_awvalid}),
-    .s_axi_awready  ({s_axi_hbm_awready,  cdc_out_awready}),
-    .s_axi_wdata    ({s_axi_hbm_wdata,    cdc_out_wdata}),
-    .s_axi_wstrb    ({s_axi_hbm_wstrb,    cdc_out_wstrb}),
-    .s_axi_wlast    ({s_axi_hbm_wlast,    cdc_out_wlast}),
-    .s_axi_wvalid   ({s_axi_hbm_wvalid,   cdc_out_wvalid}),
-    .s_axi_wready   ({s_axi_hbm_wready,   cdc_out_wready}),
-    .s_axi_bid      ({s_axi_hbm_bid,      cdc_out_bid}),
-    .s_axi_bresp    ({s_axi_hbm_bresp,    cdc_out_bresp}),
-    .s_axi_bvalid   ({s_axi_hbm_bvalid,   cdc_out_bvalid}),
-    .s_axi_bready   ({s_axi_hbm_bready,   cdc_out_bready}),
-    .s_axi_arid     ({s_axi_hbm_arid,     cdc_out_arid}),
-    .s_axi_araddr   ({s_axi_hbm_araddr,   cdc_out_araddr}),
-    .s_axi_arlen    ({s_axi_hbm_arlen,    cdc_out_arlen}),
-    .s_axi_arsize   ({s_axi_hbm_arsize,   cdc_out_arsize}),
-    .s_axi_arburst  ({s_axi_hbm_arburst,  cdc_out_arburst}),
-    .s_axi_arlock   ({s_axi_hbm_arlock,   cdc_out_arlock}),
-    .s_axi_arcache  ({s_axi_hbm_arcache,  cdc_out_arcache}),
-    .s_axi_arprot   ({s_axi_hbm_arprot,   cdc_out_arprot}),
-    .s_axi_arqos    ({s_axi_hbm_arqos,    4'b0}),
-    .s_axi_arvalid  ({s_axi_hbm_arvalid,  cdc_out_arvalid}),
-    .s_axi_arready  ({s_axi_hbm_arready,  cdc_out_arready}),
-    .s_axi_rid      ({s_axi_hbm_rid,      cdc_out_rid}),
-    .s_axi_rdata    ({s_axi_hbm_rdata,    cdc_out_rdata}),
-    .s_axi_rresp    ({s_axi_hbm_rresp,    cdc_out_rresp}),
-    .s_axi_rlast    ({s_axi_hbm_rlast,    cdc_out_rlast}),
-    .s_axi_rvalid   ({s_axi_hbm_rvalid,   cdc_out_rvalid}),
-    .s_axi_rready   ({s_axi_hbm_rready,   cdc_out_rready}),
+    // SI = {SI[1]=xb_si1_*, SI[0]=cdc_out_*} per Xilinx concat order.
+    // SI[1] is muxed between s_axi_hbm (default) and inactive (PHASE2).
+    .s_axi_awid     ({xb_si1_awid,        cdc_out_awid}),
+    .s_axi_awaddr   ({xb_si1_awaddr,      cdc_out_awaddr}),
+    .s_axi_awlen    ({xb_si1_awlen,       cdc_out_awlen}),
+    .s_axi_awsize   ({xb_si1_awsize,      cdc_out_awsize}),
+    .s_axi_awburst  ({xb_si1_awburst,     cdc_out_awburst}),
+    .s_axi_awlock   ({xb_si1_awlock,      cdc_out_awlock}),
+    .s_axi_awcache  ({xb_si1_awcache,     cdc_out_awcache}),
+    .s_axi_awprot   ({xb_si1_awprot,      cdc_out_awprot}),
+    .s_axi_awqos    ({xb_si1_awqos,       4'b0}),
+    .s_axi_awvalid  ({xb_si1_awvalid,     cdc_out_awvalid}),
+    .s_axi_awready  ({xb_si1_awready,     cdc_out_awready}),
+    .s_axi_wdata    ({xb_si1_wdata,       cdc_out_wdata}),
+    .s_axi_wstrb    ({xb_si1_wstrb,       cdc_out_wstrb}),
+    .s_axi_wlast    ({xb_si1_wlast,       cdc_out_wlast}),
+    .s_axi_wvalid   ({xb_si1_wvalid,      cdc_out_wvalid}),
+    .s_axi_wready   ({xb_si1_wready,      cdc_out_wready}),
+    .s_axi_bid      ({xb_si1_bid,         cdc_out_bid}),
+    .s_axi_bresp    ({xb_si1_bresp,       cdc_out_bresp}),
+    .s_axi_bvalid   ({xb_si1_bvalid,      cdc_out_bvalid}),
+    .s_axi_bready   ({xb_si1_bready,      cdc_out_bready}),
+    .s_axi_arid     ({xb_si1_arid,        cdc_out_arid}),
+    .s_axi_araddr   ({xb_si1_araddr,      cdc_out_araddr}),
+    .s_axi_arlen    ({xb_si1_arlen,       cdc_out_arlen}),
+    .s_axi_arsize   ({xb_si1_arsize,      cdc_out_arsize}),
+    .s_axi_arburst  ({xb_si1_arburst,     cdc_out_arburst}),
+    .s_axi_arlock   ({xb_si1_arlock,      cdc_out_arlock}),
+    .s_axi_arcache  ({xb_si1_arcache,     cdc_out_arcache}),
+    .s_axi_arprot   ({xb_si1_arprot,      cdc_out_arprot}),
+    .s_axi_arqos    ({xb_si1_arqos,       4'b0}),
+    .s_axi_arvalid  ({xb_si1_arvalid,     cdc_out_arvalid}),
+    .s_axi_arready  ({xb_si1_arready,     cdc_out_arready}),
+    .s_axi_rid      ({xb_si1_rid,         cdc_out_rid}),
+    .s_axi_rdata    ({xb_si1_rdata,       cdc_out_rdata}),
+    .s_axi_rresp    ({xb_si1_rresp,       cdc_out_rresp}),
+    .s_axi_rlast    ({xb_si1_rlast,       cdc_out_rlast}),
+    .s_axi_rvalid   ({xb_si1_rvalid,      cdc_out_rvalid}),
+    .s_axi_rready   ({xb_si1_rready,      cdc_out_rready}),
 
     // MI = single MI → bram_ctrl.
     .m_axi_awid     (xb_m_axi_awid),

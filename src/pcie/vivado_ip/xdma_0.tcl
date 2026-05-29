@@ -185,7 +185,7 @@ set_ip_properties_safe xdma_0 [list \
   CONFIG.axil_master_prefetchable                              {false} \
   CONFIG.axilite_master_en                                     {true} \
   CONFIG.axilite_master_scale                                  {Megabytes} \
-  CONFIG.axilite_master_size                                   {16} \
+  CONFIG.axilite_master_size                                   {1} \
   CONFIG.axis_pipe_line_stage                                  {0} \
   CONFIG.axist_bypass_en                                       {false} \
   CONFIG.axist_bypass_scale                                    {Megabytes} \

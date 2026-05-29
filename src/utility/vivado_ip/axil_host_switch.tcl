@@ -5,16 +5,25 @@
 # axil_host_switch_inst in alveo_u50_static.sv. Routes the host BAR
 # (axil_host) to four AXI-Lite destinations by address.
 #
-# Address map (adjust to match your host BAR layout):
-#   M00 0x00300000 - 0x003FFFFF   system_config (1 MB) — fans out to:
-#                                     0x300000-0x33FFFF  CMS subsystem
-#                                     0x340000-0x340FFF  QSPI flash
-#                                     0x350000-0x350FFF  scfg build/version
-#                                     0x360000-0x361FFF  SYSMON (XADC)
-#                                     0x370000-0x370FFF  HBICAP (ICAP/PR)
-#   M01 0x00000000 - 0x00000FFF   Static register map (4 KB)
-#   M02 0x00100000 - 0x001FFFFF   Dynamic region (1 MB)
-#   M03 0x00400000 - 0x007FFFFF   HBM APB configuration (4 MB)
+# Address map — re-packed for a 1 MB AXI-Lite BAR (XDMA
+# axilite_master_size=1).  Matches pncel_alveo/host/mini_dice.py
+# FIFO_BASE/REGMAP_BASE.  HBM left the dynamic region in the
+# BRAM-on-zcu102 phase 1 work, so M03 (HBM APB) is unused; keep its
+# slot at a tiny dummy aperture so pncel_static.sv's 4-port wiring
+# stays unchanged.
+#
+#   M00 0x00000000 - 0x0007FFFF   system_config (512 KB) — fans out to:
+#                                     0x00000-0x3FFFF  CMS subsystem (256 KB)
+#                                     0x40000-0x40FFF  QSPI flash
+#                                     0x50000-0x50FFF  scfg build/version
+#                                     0x60000-0x61FFF  SYSMON (XADC)
+#                                     0x70000-0x70FFF  HBICAP (ICAP/PR)
+#   M01 0x000A0000 - 0x000A0FFF   Static regmap (4 KB) — unused/tied off
+#   M02 0x00080000 - 0x0009FFFF   Dynamic region (128 KB) — contains
+#                                     FIFO at 0x80000 (64 KB) +
+#                                     regmap at 0x90000 (4 KB).
+#   M03 0x000B0000 - 0x000B0FFF   HBM APB (4 KB) — unused/tied off
+#                                 (was 4 MB at 0x400000; HBM moved out).
 #
 # Source IP : xilinx.com:ip:axi_switch:1.0
 # *************************************************************************
@@ -44,8 +53,8 @@ set_ip_properties_safe axil_host_switch [list \
   CONFIG.M00_AXI_WUSER_BITS_PER_BYTE                           {0} \
   CONFIG.M00_CLK.FREQ_HZ                                       {10000000} \
   CONFIG.M00_CLK.INSERT_VIP                                    {0} \
-  CONFIG.M00_SEG00_BASE_ADDR                                   {0x0000000000300000} \
-  CONFIG.M00_SEG00_HIGH_ADDR                                   {0x00000000003FFFFF} \
+  CONFIG.M00_SEG00_BASE_ADDR                                   {0x0000000000000000} \
+  CONFIG.M00_SEG00_HIGH_ADDR                                   {0x000000000007FFFF} \
   CONFIG.M00_SEG00_SECURE_READ                                 {false} \
   CONFIG.M00_SEG00_SECURE_WRITE                                {false} \
   CONFIG.M00_SEG00_SUPPORTS_READ                               {true} \
@@ -155,8 +164,8 @@ set_ip_properties_safe axil_host_switch [list \
   CONFIG.M01_AXI_WUSER_BITS_PER_BYTE                           {0} \
   CONFIG.M01_CLK.FREQ_HZ                                       {10000000} \
   CONFIG.M01_CLK.INSERT_VIP                                    {0} \
-  CONFIG.M01_SEG00_BASE_ADDR                                   {0x0000000000000000} \
-  CONFIG.M01_SEG00_HIGH_ADDR                                   {0x0000000000000FFF} \
+  CONFIG.M01_SEG00_BASE_ADDR                                   {0x00000000000A0000} \
+  CONFIG.M01_SEG00_HIGH_ADDR                                   {0x00000000000A0FFF} \
   CONFIG.M01_SEG00_SECURE_READ                                 {false} \
   CONFIG.M01_SEG00_SECURE_WRITE                                {false} \
   CONFIG.M01_SEG00_SUPPORTS_READ                               {true} \
@@ -266,8 +275,8 @@ set_ip_properties_safe axil_host_switch [list \
   CONFIG.M02_AXI_WUSER_BITS_PER_BYTE                           {0} \
   CONFIG.M02_CLK.FREQ_HZ                                       {10000000} \
   CONFIG.M02_CLK.INSERT_VIP                                    {0} \
-  CONFIG.M02_SEG00_BASE_ADDR                                   {0x0000000000100000} \
-  CONFIG.M02_SEG00_HIGH_ADDR                                   {0x00000000001FFFFF} \
+  CONFIG.M02_SEG00_BASE_ADDR                                   {0x0000000000080000} \
+  CONFIG.M02_SEG00_HIGH_ADDR                                   {0x000000000009FFFF} \
   CONFIG.M02_SEG00_SECURE_READ                                 {false} \
   CONFIG.M02_SEG00_SECURE_WRITE                                {false} \
   CONFIG.M02_SEG00_SUPPORTS_READ                               {true} \
@@ -377,8 +386,8 @@ set_ip_properties_safe axil_host_switch [list \
   CONFIG.M03_AXI_WUSER_BITS_PER_BYTE                           {0} \
   CONFIG.M03_CLK.FREQ_HZ                                       {10000000} \
   CONFIG.M03_CLK.INSERT_VIP                                    {0} \
-  CONFIG.M03_SEG00_BASE_ADDR                                   {0x0000000000400000} \
-  CONFIG.M03_SEG00_HIGH_ADDR                                   {0x00000000007FFFFF} \
+  CONFIG.M03_SEG00_BASE_ADDR                                   {0x00000000000B0000} \
+  CONFIG.M03_SEG00_HIGH_ADDR                                   {0x00000000000B0FFF} \
   CONFIG.M03_SEG00_SECURE_READ                                 {false} \
   CONFIG.M03_SEG00_SECURE_WRITE                                {false} \
   CONFIG.M03_SEG00_SUPPORTS_READ                               {true} \

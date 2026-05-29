@@ -294,16 +294,17 @@ source ${src_dir}/hbm/vivado_ip/axi_bram_ctrl_alveo.tcl
 
 # Chip-side AXI-Lite switch IP (instantiated inside axi_lite_switch.sv).
 # 1S→2M crossbar that splits the host AXI-Lite stream into:
-#   M00 → axi_lite_fifo   (64 KB at 0x0010_0000) ← CSR-write FIFO.  The
+#   M00 → axi_lite_fifo   (64 KB at 0x0008_0000) ← CSR-write FIFO.  The
 #         lower 16 b of the host AXI-Lite address become the OP_WRITE
 #         packet's `addr` field, which the chip's axi_link_rx routes to
 #         cgra_io_csr (REG_STARTPC=0xFF02, REG_CTRL=0xFF00, etc.).
-#         BASE is within axil_host_switch.M02 (0x0010_0000-0x001F_FFFF)
-#         so host writes to 0x0010_FFxx pass through cleanly.
-#   M01 → axi_lite_regmap (4 KB at 0x0011_0000) ← shifted from
-#         0x0010_0000 to make room for the FIFO's 16-bit aperture.
-# Must agree with the mini_dice_alveo_dynamic_region.sv FIFO/regmap base
-# addrs (lines ~1429-1435).
+#         BASE is within axil_host_switch.M02 (0x0008_0000-0x0009_FFFF)
+#         so host writes to 0x0008_FFxx pass through cleanly.
+#   M01 → axi_lite_regmap (4 KB at 0x0009_0000) ← shifted from
+#         0x0008_0000 to make room for the FIFO's 16-bit aperture.
+# Must agree with mini_dice_alveo_dynamic_region.sv FIFO/regmap base
+# addrs (lines ~1629-1632) and pncel_alveo/host/mini_dice.py
+# FIFO_BASE / REGMAP_BASE.
 create_ip -name axi_crossbar -vendor xilinx.com -library ip -module_name axi_lite_switch_xbar
 set_property -dict [list \
   CONFIG.PROTOCOL             {AXI4LITE} \
@@ -312,9 +313,9 @@ set_property -dict [list \
   CONFIG.ADDR_WIDTH           {32} \
   CONFIG.DATA_WIDTH           {32} \
   CONFIG.CONNECTIVITY_MODE    {SASD} \
-  CONFIG.M00_A00_BASE_ADDR    {0x0000000000100000} \
+  CONFIG.M00_A00_BASE_ADDR    {0x0000000000080000} \
   CONFIG.M00_A00_ADDR_WIDTH   {16} \
-  CONFIG.M01_A00_BASE_ADDR    {0x0000000000110000} \
+  CONFIG.M01_A00_BASE_ADDR    {0x0000000000090000} \
   CONFIG.M01_A00_ADDR_WIDTH   {12} \
 ] [get_ips axi_lite_switch_xbar]
 

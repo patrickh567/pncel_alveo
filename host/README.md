@@ -46,8 +46,8 @@ The script's address constants come from these RTL definitions:
 
 | Constant in `mini_dice.py` | Value | Source |
 |---|---|---|
-| `FIFO_BASE`        | `0x0010_0000`    | `axil_host_switch.tcl` M02 SEG00 |
-| `REGMAP_BASE`      | `0x0011_0000`    | `axil_host_switch.tcl` M03 SEG00 |
+| `FIFO_BASE`        | `0x0008_0000`    | `axil_host_switch.tcl` M02 SEG00 (1 MB BAR) |
+| `REGMAP_BASE`      | `0x0009_0000`    | inside M02 SEG00 (axi_lite_switch_xbar M01) |
 | `BRAM_DMA_BASE`    | `0x4_0000_0000`  | `mini_dice_alveo_build.tcl:286` axi_dma_switch.M02 SEG00 |
 | `META_BRAM_OFF`    | `0x0000`         | mini_dice_alveo_dynamic_region.sv: mfetch is 1:1 from chip_addr to BRAM byte |
 | `BS_BRAM_OFF`      | `0x4000`         | `mini_dice_alveo_dynamic_region.sv`: `localparam BS_BRAM_OFFSET = 17'h4000` |
@@ -59,7 +59,7 @@ The script's address constants come from these RTL definitions:
 | `REG_CSRX0..7`     | `0xFF10..0xFF1E` | `cgra_io_csr.sv` (stride 2 bytes; 16-bit registers) |
 
 Host accesses chip CSR offset `O` by reading/writing AXI-Lite address
-`FIFO_BASE | O` (e.g. `0x0010_FF00` to pulse START).  The axi_lite_fifo
+`FIFO_BASE | O` (e.g. `0x0008_FF00` to pulse START).  The axi_lite_fifo
 inside the dynamic region extracts the low 16 bits as the chip's CSR
 offset and emits an `OP_WRITE` packet that the chip's `axi_link_rx`
 delivers to `cgra_io_csr`.
@@ -118,7 +118,7 @@ can diagnose without re-running:
 
 | Symptom                              | Likely cause |
 |--------------------------------------|--------------|
-| `csr_read` blocks / times out        | Chip's `axil_read_packet_former` → chip → `axil_read_response_handler` round trip is stuck.  Try reading the regmap at `0x0011_0000` directly to confirm the BAR/AXI-Lite path itself is alive. |
+| `csr_read` blocks / times out        | Chip's `axil_read_packet_former` → chip → `axil_read_response_handler` round trip is stuck.  Try reading the regmap at `0x0009_0000` directly to confirm the BAR/AXI-Lite path itself is alive. |
 | `wait_for_cta_done` times out        | Same race we saw in sim, or the chip genuinely hung.  Bump `--per-cta-timeout-s` first; then run the sim TB on the same vector to compare cycle counts. |
 | `read_back_writes` shows all 0       | DMA c2h not landing in the right region.  Sanity-check by writing a known pattern via h2c then reading it back at the same DMA addr — the `--mock` mode covers this loopback for the byte arithmetic, but the real driver may need `O_SYNC` / page-alignment hints depending on the kernel version. |
 | Diff says all UNEXPECTED             | Wrong scaling between chip_addr and BRAM byte.  The script uses `8X + 0x8000`; if you changed `DATA_BRAM_OFFSET_WORDS` in the RTL, update `DATA_BRAM_OFF` here. |
