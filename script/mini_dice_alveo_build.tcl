@@ -89,6 +89,7 @@ add_files -norecurse [list \
     ${src_dir}/system_config/cms_subsystem_wrapper_if.sv \
     ${src_dir}/system_config/system_config_register.v \
     ${src_dir}/system_config/system_config.sv \
+    ${src_dir}/system_config/clk_island.sv \
 ]
 
 # PCIe / XDMA

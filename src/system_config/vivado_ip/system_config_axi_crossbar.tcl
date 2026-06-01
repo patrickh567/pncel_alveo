@@ -93,10 +93,10 @@ set_ip_properties_safe system_config_axi_crossbar [list \
   CONFIG.M00_WRITE_ISSUING                                     {1} \
   CONFIG.M01_A00_ADDR_WIDTH                                    {13} \
   CONFIG.M01_A00_BASE_ADDR                                     {0x0000000000060000} \
-  CONFIG.M01_A01_ADDR_WIDTH                                    {13} \
-  CONFIG.M01_A01_BASE_ADDR                                     {0x0000000000002000} \
-  CONFIG.M01_A02_ADDR_WIDTH                                    {13} \
-  CONFIG.M01_A02_BASE_ADDR                                     {0x0000000000004000} \
+  CONFIG.M01_A01_ADDR_WIDTH                                    {0} \
+  CONFIG.M01_A01_BASE_ADDR                                     {0xFFFFFFFFFFFFFFFF} \
+  CONFIG.M01_A02_ADDR_WIDTH                                    {0} \
+  CONFIG.M01_A02_BASE_ADDR                                     {0xFFFFFFFFFFFFFFFF} \
   CONFIG.M01_A03_ADDR_WIDTH                                    {0} \
   CONFIG.M01_A03_BASE_ADDR                                     {0xFFFFFFFFFFFFFFFF} \
   CONFIG.M01_A04_ADDR_WIDTH                                    {0} \
@@ -162,8 +162,8 @@ set_ip_properties_safe system_config_axi_crossbar [list \
   CONFIG.M01_WRITE_ISSUING                                     {1} \
   CONFIG.M02_A00_ADDR_WIDTH                                    {18} \
   CONFIG.M02_A00_BASE_ADDR                                     {0x0000000000000000} \
-  CONFIG.M02_A01_ADDR_WIDTH                                    {12} \
-  CONFIG.M02_A01_BASE_ADDR                                     {0x000000000000A000} \
+  CONFIG.M02_A01_ADDR_WIDTH                                    {0} \
+  CONFIG.M02_A01_BASE_ADDR                                     {0xFFFFFFFFFFFFFFFF} \
   CONFIG.M02_A02_ADDR_WIDTH                                    {0} \
   CONFIG.M02_A02_BASE_ADDR                                     {0xFFFFFFFFFFFFFFFF} \
   CONFIG.M02_A03_ADDR_WIDTH                                    {0} \

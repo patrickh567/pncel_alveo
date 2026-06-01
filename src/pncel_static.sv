@@ -382,8 +382,38 @@ module pncel_static #(
   // ---------------------------------------------------------------------
   wire pr_decouple_w;
   wire pr_dyn_reset_w;
-  wire icap_clk_unused;
-  wire icap_aresetn_unused;
+
+  // ---------------------------------------------------------------------
+  // Clock island — MMCM + BUFGs + reset synchronizers extracted out of
+  // system_config so the MMCM lives outside any subsystem that's stubbed
+  // in sim.  In HW, identical clocking behavior to having the MMCM inside
+  // system_config.  In sim, clk_wiz_50Mhz's behavioral model still runs
+  // (because system_config is stubbed but clk_island isn't), producing a
+  // real 100 MHz cache_clk that's actually asynchronous to aclk — which
+  // lets the cache_clk-domain CDCs be exercised in cosim instead of
+  // running at the same rate as aclk.
+  // ---------------------------------------------------------------------
+  wire cms_clk;
+  wire icap_clk;
+  wire cms_locked;
+  wire cms_aresetn;
+  wire icap_aresetn;
+
+  clk_island u_clk_island (
+    .aclk_ref     (axi_aclk),
+    .cms_clk      (cms_clk),
+    .icap_clk     (icap_clk),
+    .cms_locked   (cms_locked),
+    .cms_aresetn  (cms_aresetn),
+    .icap_aresetn (icap_aresetn)
+  );
+
+  // cache_clk port to the parent wrapper is driven by clk_island's
+  // 100 MHz output regardless of SIMULATION mode.  Used to be assigned
+  // inside the SIMULATION stub as `assign cache_clk = aclk` (a hack
+  // because system_config — which held the MMCM — was stubbed).  No
+  // longer needed.
+  assign cache_clk = icap_clk;
 
 `ifndef SIMULATION
   system_config #(
@@ -410,11 +440,19 @@ module pncel_static #(
 
     .aclk_ref                (axi_aclk),
 
-    .icap_clk_out            (icap_clk_unused),
-    .icap_aresetn_out        (icap_aresetn_unused),
+    // Clocks + resets driven externally by clk_island (above).
+    .cms_clk                 (cms_clk),
+    .icap_clk                (icap_clk),
+    .cms_locked              (cms_locked),
+    .cms_aresetn             (cms_aresetn),
+    .icap_aresetn            (icap_aresetn),
 
     .pr_decouple             (pr_decouple_w),
-    .pr_dyn_reset            (pr_dyn_reset_w)
+    .pr_dyn_reset            (pr_dyn_reset_w),
+
+    // Debug-only: routed to u_ila_mmcm_lock inside system_config so the
+    // MMCM-lock ILA capture also shows PCIe link state.
+    .user_lnk_up_dbg         (user_lnk_up)
   );
 `else
   // Simulation stub — system_config pulls in CMS Microblaze etc., heavy
@@ -445,6 +483,11 @@ module pncel_static #(
 
   assign pr_decouple_w          = 1'b0;
   assign pr_dyn_reset_w         = 1'b0;
+
+  // cache_clk is no longer assigned here — clk_island (above the
+  // ifndef SIMULATION block) drives it via icap_clk in both sim and
+  // HW.  Sim now sees a real 100 MHz cache_clk from the clk_wiz_50Mhz
+  // behavioral model.
 `endif
 
   assign decouple = pr_decouple_w;

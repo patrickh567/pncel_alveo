@@ -67,27 +67,35 @@ module system_config #(
   // Interrupt to host
   output        interrupt_host,
 
-  // Reference clock for the internal clk_wiz_50Mhz MMCM.  Must be the
-  // XDMA 250 MHz user clock (axi_aclk).  Used to be implicit (clk_wiz's
-  // clk_in1 was tied to s_axil.aclk), but s_axil now runs at 100 MHz
-  // for timing reasons, and 100 MHz input would both (a) require
-  // re-configuring the MMCM and (b) create a dependency loop because
-  // clk_wiz's clk_out2 IS the 100 MHz icap_clk that now drives s_axil.
+  // aclk_ref kept for ILA-clock domain inside system_config (currently
+  // axi_aclk = 250 MHz from XDMA).  Previously this also fed the
+  // internal MMCM; the MMCM has been moved out to pncel_static's
+  // clk_island module, and system_config now receives the derived
+  // clocks/resets as inputs (see cms_clk / icap_clk / *_aresetn below).
   input         aclk_ref,
 
-  // 100 MHz clock / sync reset generated internally by clk_wiz_50Mhz
-  // (clk_out2 → BUFG → icap_clk).  Exposed so callers can reuse it for
-  // ≤100 MHz paths outside system_config (e.g. the HBM APB config path,
-  // which is too slow for the 250 MHz axi_aclk).
-  output        icap_clk_out,
-  output        icap_aresetn_out,
+  // Clocks + resets generated externally by clk_island in pncel_static.
+  // Were previously generated inside this module from clk_wiz_50Mhz +
+  // BUFGs + reset sync chains; that block was extracted so that sim
+  // (where system_config is stubbed) can still get a real 100 MHz
+  // cache_clk via the MMCM behavioral model.
+  input         cms_clk,         // 50 MHz, drives CMS subsystem
+  input         icap_clk,        // 100 MHz, drives HBICAP + the AXIL chain
+  input         cms_locked,      // MMCM PLL lock indicator
+  input         cms_aresetn,     // cms_clk-domain reset, active-low
+  input         icap_aresetn,    // icap_clk-domain reset, active-low
 
   // PR-decouple control bits — sourced from scfg_reg's REG_PR_CTRL
   // (host BAR + 0x0005_001C).  pr_decouple drives the axi_decoupler
   // instances at the PR boundary; pr_dyn_reset asserts the dynamic-region
   // reset.  Routed straight out for the parent (pncel_top) to consume.
   output        pr_decouple,
-  output        pr_dyn_reset
+  output        pr_dyn_reset,
+
+  // Debug-only: XDMA's user_lnk_up routed in from pncel_static so the
+  // u_ila_mmcm_lock ILA can show PCIe link status alongside cms_locked.
+  // Caller must drive it (typically wired to xdma's user_lnk_up output).
+  input         user_lnk_up_dbg
 );
 
   // ---------------------------------------------------------------------
@@ -310,72 +318,49 @@ module system_config #(
     .s_axi_rdata   (axil_smon_rdata),
     .s_axi_rresp   (axil_smon_rresp),
     .s_axi_rvalid  (axil_smon_rvalid),
-    .s_axi_rready  (axil_smon_rready)
+    .s_axi_rready  (axil_smon_rready),
+
+    // External analog input pins.  The U50 doesn't break these out to
+    // any external probe pin, so tie to GND to silence the
+    // [Synth 8-4442] BlackBox-unconnected critical warning.
+    .vp            (1'b0),
+    .vn            (1'b0)
   );
 
   // ---------------------------------------------------------------------
-  // Clock generation: 50 MHz (CMS) + 100 MHz (HBICAP ICAP)
+  // Clock generation has moved out of this module into clk_island.sv
+  // (instantiated by pncel_static).  This module receives the derived
+  // clocks (cms_clk, icap_clk) and resets (cms_aresetn, icap_aresetn,
+  // cms_locked) as input ports — see the port list above.  The
+  // ILA below still has access to them, just as inputs now.
+  // ---------------------------------------------------------------------
+
+`ifdef ENABLE_XDMA_ILA
+  // ---------------------------------------------------------------------
+  // Diagnostic ILA on the clk_wiz_50Mhz MMCM lock + derived resets.
   //
-  // Both outputs come from the same PLL (clk_wiz_50Mhz) locked to
-  // axi_aclk.  Each output gets its own BUFG and its own 2-stage
-  // async-assert / sync-deassert reset synchronizer, so the two
-  // domains can start independently.  The `locked` signal from the PLL
-  // is shared — both resets stay asserted until the PLL is locked.
+  // Clocked on aclk_ref (axi_aclk = 250 MHz) so we can observe the
+  // MMCM coming up around PCIe enumeration time.  aclk_ref is the
+  // MMCM's input reference, so by definition it's running whenever
+  // the AXI fabric is alive.
+  //
+  // If `cms_locked` stays 0 forever, the entire chip-mem subsystem
+  // (cache_clk-domain dynamic region) and sysconfig's internal AXI
+  // crossbar are held in reset via icap_aresetn / cms_aresetn — which
+  // would make every host BAR read time out as 0xFFFFFFFF.  This ILA
+  // proves whether MMCM lock is the culprit in one capture.
+  //
+  // See src/utility/vivado_ip/ila_mmcm_lock.tcl for trigger recipes.
   // ---------------------------------------------------------------------
-  wire clk_50mhz_wiz_out;
-  wire clk_100mhz_wiz_out;
-  wire cms_clk;
-  wire icap_clk;
-  assign icap_clk_out = icap_clk;
-  wire cms_locked;
-
-  clk_wiz_50Mhz clk_wiz_cms_inst (
-    .clk_in1  (aclk_ref),
-    .resetn   (aresetn),
-    .clk_out1 (clk_50mhz_wiz_out),
-    .clk_out2 (clk_100mhz_wiz_out),
-    .locked   (cms_locked)
+  ila_mmcm_lock u_ila_mmcm_lock (
+    .clk    (aclk_ref),
+    .probe0 (cms_locked),
+    .probe1 (icap_aresetn),
+    .probe2 (cms_aresetn),
+    .probe3 (aresetn),          // XDMA axi_aresetn into the MMCM
+    .probe4 (user_lnk_up_dbg)   // XDMA PCIe link-up status
   );
-
-  BUFG clk_50mhz_bufg_inst (
-    .I (clk_50mhz_wiz_out),
-    .O (cms_clk)
-  );
-
-  BUFG clk_100mhz_bufg_inst (
-    .I (clk_100mhz_wiz_out),
-    .O (icap_clk)
-  );
-
-  // 50 MHz reset (async assert, sync deassert).
-  localparam SYNC_STAGES = 2;
-  reg [SYNC_STAGES-1:0] cms_aresetn_sync = {SYNC_STAGES{1'b0}};
-  wire cms_aresetn;
-
-  assign cms_aresetn = cms_locked && cms_aresetn_sync[SYNC_STAGES-1];
-
-  always @(posedge cms_clk) begin
-    if (!cms_locked) begin
-      cms_aresetn_sync <= {SYNC_STAGES{1'b0}};
-    end else begin
-      cms_aresetn_sync <= {cms_aresetn_sync[SYNC_STAGES-2:0], 1'b1};
-    end
-  end
-
-  // 100 MHz reset (same pattern, separate sync chain on icap_clk).
-  reg [SYNC_STAGES-1:0] icap_aresetn_sync = {SYNC_STAGES{1'b0}};
-  wire icap_aresetn;
-
-  assign icap_aresetn     = cms_locked && icap_aresetn_sync[SYNC_STAGES-1];
-  assign icap_aresetn_out = icap_aresetn;
-
-  always @(posedge icap_clk) begin
-    if (!cms_locked) begin
-      icap_aresetn_sync <= {SYNC_STAGES{1'b0}};
-    end else begin
-      icap_aresetn_sync <= {icap_aresetn_sync[SYNC_STAGES-2:0], 1'b1};
-    end
-  end
+`endif
 
   // ---------------------------------------------------------------------
   // M02 → CMS (CDC 250 → 50 MHz, then cms_subsystem via wrapper_if shim)
