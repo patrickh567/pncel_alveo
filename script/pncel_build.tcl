@@ -121,6 +121,17 @@ add_files -norecurse [list \
 
 set_property include_dirs ${src_dir} [current_fileset]
 set_property top ${top_module}        [current_fileset]
+
+# Stamp the BUILD_TIMESTAMP parameter on the top with the current epoch
+# time so each `make project` produces a bitstream with a unique scfg_reg
+# REG_BUILD_TIMESTAMP value.  Read it back from the host with
+# host/read_bitstream_info.py to confirm which build is actually loaded.
+# (Default in pncel_top.sv is 32'h01010000 — used only if this property
+# isn't set.)
+set BUILD_TS_HEX [format %08x [clock seconds]]
+set_property generic "BUILD_TIMESTAMP=32'h${BUILD_TS_HEX}" [current_fileset]
+puts "pncel_build.tcl: BUILD_TIMESTAMP = 32'h${BUILD_TS_HEX} ([clock format [clock seconds]])"
+
 set_property verilog_define {__au50__} [current_fileset]
 
 # =========================================================================

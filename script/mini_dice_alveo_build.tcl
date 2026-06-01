@@ -204,6 +204,17 @@ set_property include_dirs [list \
     ${DICE_ROOT}/axi_crossbar/common_cells/common_cells/include \
 ] [current_fileset]
 set_property top ${top_module} [current_fileset]
+
+# Stamp the BUILD_TIMESTAMP parameter on the top with the current epoch
+# time so each `make project` produces a bitstream with a unique scfg_reg
+# REG_BUILD_TIMESTAMP value.  Read it back from the host with
+# host/read_bitstream_info.py to confirm which build is actually loaded.
+# (Default in mini_dice_alveo.sv is 32'h01010000 — used only if this
+# property isn't set.)
+set BUILD_TS_HEX [format %08x [clock seconds]]
+set_property generic "BUILD_TIMESTAMP=32'h${BUILD_TS_HEX}" [current_fileset]
+puts "mini_dice_alveo_build.tcl: BUILD_TIMESTAMP = 32'h${BUILD_TS_HEX} ([clock format [clock seconds]])"
+
 # Hardware build defines.  Match mini_dice_zcu102's synth flow + Vortex's
 # requirement for SYNTHESIS to gate sim-only constructs.  No SIMULATION
 # or SIM_*_STUB flags — this is a real synth target.
