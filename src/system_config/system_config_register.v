@@ -194,12 +194,14 @@ module system_config_register #(
   //
   // Host software writes here directly; the bits are routed out as
   // pr_decouple / pr_dyn_reset and consumed by the static-side axi_decoupler
-  // and reset-distribution logic in pncel_top.  Both bits power up to 1 so
-  // the PR partition is fenced off and held in reset until software
-  // explicitly clears them after the first bitstream load.
+  // and reset-distribution logic in pncel_top.  Both bits power up to 0 so
+  // the default dynamic region (loaded as part of the full bitstream) is
+  // live and ready to accept host traffic immediately after PCIe link-up.
+  // Software only needs to assert these around a partial-reconfig cycle
+  // (set both to 1 before streaming a new RM into HBICAP, clear after).
   always @(posedge aclk) begin
     if (~aresetn) begin
-      reg_pr_ctrl <= 32'h0000_0003;
+      reg_pr_ctrl <= 32'h0000_0000;
     end
     else if (reg_en && reg_we && reg_addr == REG_PR_CTRL) begin
       reg_pr_ctrl <= reg_din;
