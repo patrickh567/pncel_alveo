@@ -28,16 +28,25 @@
 #   other          slave responded with real data.
 #
 # Usage:
-#   sudo ./host/probe_bar.sh                  # /dev/xdma0_user
+#   sudo ./host/probe_bar.sh                  # safe set only (default)
 #   sudo ./host/probe_bar.sh -d 1             # /dev/xdma1_user
+#   sudo ./host/probe_bar.sh --dangerous      # also probe CMS/SYSMON/HBICAP/QSPI
+#                                              ↑ may HANG THE HOST if any of
+#                                              those sub-IPs is wedged (AR fires,
+#                                              no RVALID, PCIe completion timeout,
+#                                              AER fatal, kernel panic).  Only
+#                                              use after confirming the safe
+#                                              set works.
 # =============================================================================
 set -u
 set -o pipefail
 
 DEV_INDEX=0
+DANGEROUS=0
 while [ $# -gt 0 ]; do
     case "$1" in
-        -d|--device) DEV_INDEX="$2"; shift 2 ;;
+        -d|--device)   DEV_INDEX="$2"; shift 2 ;;
+        -x|--dangerous) DANGEROUS=1; shift ;;
         -h|--help)
             sed -n '2,/^# =====/p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
@@ -79,14 +88,34 @@ echo "  $(printf '%-12s  %-32s  %-12s   %s' addr region value interp)"
 echo "  ------------------------------------------------------------------------------------"
 
 # Sysconfig BAR (axil_host_switch.M00, 0x00000-0x7FFFF).
-probe 0x00000000 "sysconfig:CMS subsystem"
-probe 0x00040000 "sysconfig:QSPI flash (if mapped)"
+#
+# DANGER: reads to the CMS subsystem (0x00000-0x3FFFF), SYSMON
+# (0x60000-0x61FFF), HBICAP (0x70000-0x70FFF), and QSPI (0x40000-0x40FFF)
+# can wedge the AXI bus if their internal sub-IPs are misconfigured /
+# stuck — observed symptom is AR fires on m_axil but RVALID never
+# returns, which trips PCIe completion timeout → AER fatal → host
+# kernel lockup.  These probes are gated behind --dangerous (-x).
+#
+# Safe default set is just scfg_reg (single AXI-Lite register file on
+# the same aclk as XDMA, no CDC, simplest possible slave — if even
+# scfg_reg hangs we know the issue is the sysconfig internal xbar,
+# not any specific peripheral) and the dynamic-region regmap path
+# (which is what host/smoketest.py exercises in real workloads).
+
+if [ "$DANGEROUS" = 1 ]; then
+    probe 0x00000000 "sysconfig:CMS subsystem (DANGEROUS)"
+    probe 0x00040000 "sysconfig:QSPI flash (DANGEROUS)"
+fi
+
 probe 0x00050000 "scfg:REG_BUILD_TIMESTAMP"
 probe 0x00050004 "scfg:REG_SYSTEM_RST"
 probe 0x00050008 "scfg:REG_SYSTEM_STATUS"
 probe 0x0005001C "scfg:REG_PR_CTRL"
-probe 0x00060000 "sysconfig:SYSMON"
-probe 0x00070000 "sysconfig:HBICAP"
+
+if [ "$DANGEROUS" = 1 ]; then
+    probe 0x00060000 "sysconfig:SYSMON (DANGEROUS)"
+    probe 0x00070000 "sysconfig:HBICAP (DANGEROUS)"
+fi
 
 # axil_host_switch M02 — dynamic region (chip CSR FIFO + regmap).
 probe 0x00080000 "dyn:chip CSR FIFO base (write-only)"
