@@ -23,7 +23,7 @@ set_ip_properties_safe system_config_axi_crossbar [list \
   CONFIG.DATA_WIDTH                                            {32} \
   CONFIG.ID_WIDTH                                              {0} \
   CONFIG.M00_A00_ADDR_WIDTH                                    {12} \
-  CONFIG.M00_A00_BASE_ADDR                                     {0x0000000000350000} \
+  CONFIG.M00_A00_BASE_ADDR                                     {0x0000000000050000} \
   CONFIG.M00_A01_ADDR_WIDTH                                    {0} \
   CONFIG.M00_A01_BASE_ADDR                                     {0xFFFFFFFFFFFFFFFF} \
   CONFIG.M00_A02_ADDR_WIDTH                                    {0} \
@@ -92,7 +92,7 @@ set_ip_properties_safe system_config_axi_crossbar [list \
   CONFIG.M00_SECURE                                            {0} \
   CONFIG.M00_WRITE_ISSUING                                     {1} \
   CONFIG.M01_A00_ADDR_WIDTH                                    {13} \
-  CONFIG.M01_A00_BASE_ADDR                                     {0x0000000000360000} \
+  CONFIG.M01_A00_BASE_ADDR                                     {0x0000000000060000} \
   CONFIG.M01_A01_ADDR_WIDTH                                    {13} \
   CONFIG.M01_A01_BASE_ADDR                                     {0x0000000000002000} \
   CONFIG.M01_A02_ADDR_WIDTH                                    {13} \
@@ -161,7 +161,7 @@ set_ip_properties_safe system_config_axi_crossbar [list \
   CONFIG.M01_SECURE                                            {0} \
   CONFIG.M01_WRITE_ISSUING                                     {1} \
   CONFIG.M02_A00_ADDR_WIDTH                                    {18} \
-  CONFIG.M02_A00_BASE_ADDR                                     {0x0000000000300000} \
+  CONFIG.M02_A00_BASE_ADDR                                     {0x0000000000000000} \
   CONFIG.M02_A01_ADDR_WIDTH                                    {12} \
   CONFIG.M02_A01_BASE_ADDR                                     {0x000000000000A000} \
   CONFIG.M02_A02_ADDR_WIDTH                                    {0} \
@@ -230,7 +230,7 @@ set_ip_properties_safe system_config_axi_crossbar [list \
   CONFIG.M02_SECURE                                            {0} \
   CONFIG.M02_WRITE_ISSUING                                     {1} \
   CONFIG.M03_A00_ADDR_WIDTH                                    {12} \
-  CONFIG.M03_A00_BASE_ADDR                                     {0x0000000000370000} \
+  CONFIG.M03_A00_BASE_ADDR                                     {0x0000000000070000} \
   CONFIG.M03_A01_ADDR_WIDTH                                    {0} \
   CONFIG.M03_A01_BASE_ADDR                                     {0xFFFFFFFFFFFFFFFF} \
   CONFIG.M03_A02_ADDR_WIDTH                                    {0} \

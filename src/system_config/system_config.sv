@@ -83,7 +83,7 @@ module system_config #(
   output        icap_aresetn_out,
 
   // PR-decouple control bits — sourced from scfg_reg's REG_PR_CTRL
-  // (host BAR + 0x00350_01C).  pr_decouple drives the axi_decoupler
+  // (host BAR + 0x0005_001C).  pr_decouple drives the axi_decoupler
   // instances at the PR boundary; pr_dyn_reset asserts the dynamic-region
   // reset.  Routed straight out for the parent (pncel_top) to consume.
   output        pr_decouple,
@@ -193,12 +193,13 @@ module system_config #(
   // ---------------------------------------------------------------------
   // 1S:4M AXI-Lite crossbar.  Configured by
   // src/system_config/vivado_ip/system_config_axi_crossbar.tcl with
-  // NUM_MI=4 and these address segments (all within host_switch M00):
+  // NUM_MI=4 and these address segments (all within host_switch M00,
+  // which is now at host BAR 0x000000-0x07FFFF post-BAR-shrink):
   //
-  //   M00 scfg_reg  0x00350000-0x00350FFF   (4 KB)
-  //   M01 sysmon    0x00360000-0x00361FFF   (8 KB)
-  //   M02 cms       0x00300000-0x0033FFFF   (256 KB) — OpenNIC native
-  //   M03 hbicap    0x00370000-0x00370FFF   (4 KB)
+  //   M00 scfg_reg  0x00050000-0x00050FFF   (4 KB)   ← REG_PR_CTRL at +0x01C
+  //   M01 sysmon    0x00060000-0x00061FFF   (8 KB)
+  //   M02 cms       0x00000000-0x0003FFFF   (256 KB) — OpenNIC native
+  //   M03 hbicap    0x00070000-0x00070FFF   (4 KB)
   // ---------------------------------------------------------------------
   system_config_axi_crossbar xbar_inst (
     .aclk          (aclk),
