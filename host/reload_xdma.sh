@@ -27,6 +27,16 @@
 #   sudo ./host/reload_xdma.sh -d 0000:81:00.0       # explicit BDF
 #   sudo ./host/reload_xdma.sh --skip-driver          # rescan only, leave xdma loaded
 #   sudo ./host/reload_xdma.sh --verbose              # show the lspci Region/LnkSta diff
+#   sudo ./host/reload_xdma.sh --no-lspci             # skip ALL lspci invocations
+#                                                     # (lspci -vv dereferences the
+#                                                     # MSI-X table pointer and reads
+#                                                     # the table contents via the BAR;
+#                                                     # those generate AXI-Lite TLPs,
+#                                                     # which can hang the host if any
+#                                                     # AXI slave at the touched offset
+#                                                     # is wedged.  Pair with
+#                                                     # `--skip-driver` for a truly
+#                                                     # zero-AXI-traffic rescan).
 #
 # Exit status: 0 if a Xilinx device is present and /dev/xdma0_user exists
 # after the rebind; 1 otherwise.
@@ -38,6 +48,7 @@ set -o pipefail
 PROG="$(basename "$0")"
 VERBOSE=0
 SKIP_DRIVER=0
+SKIP_LSPCI=0
 EXPLICIT_BDF=""
 XDMA_MODULE="${XDMA_MODULE:-xdma}"
 
@@ -54,6 +65,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         -d|--device)       EXPLICIT_BDF="${2:-}"; shift 2 ;;
         --skip-driver)     SKIP_DRIVER=1; shift ;;
+        --no-lspci)        SKIP_LSPCI=1; shift ;;
         -v|--verbose)      VERBOSE=1; shift ;;
         -h|--help)         usage 0 ;;
         *)                 echo "[$PROG] unknown arg: $1" >&2; usage 1 ;;
@@ -87,8 +99,10 @@ info "Xilinx device     = $BDF"
 
 # -----------------------------------------------------------------------------
 # 2. Snapshot pre-rescan BAR info if verbose, so we can show the delta.
+#    Skipped under --no-lspci because `lspci -vv` reads the MSI-X table
+#    via the BAR (TLPs that can hit unmapped or wedged AXI slaves).
 # -----------------------------------------------------------------------------
-if [ "$VERBOSE" = 1 ]; then
+if [ "$VERBOSE" = 1 ] && [ "$SKIP_LSPCI" = 0 ]; then
     echo "[$PROG] --- pre-rescan lspci (Region/LnkSta) ---"
     lspci -vv -s "$BDF" 2>/dev/null | grep -E 'Region|LnkSta' || true
 fi
@@ -147,9 +161,16 @@ fi
 
 # -----------------------------------------------------------------------------
 # 5. Sanity check + summary.
+#    Skipped under --no-lspci so the rescan path issues zero AXI-Lite TLPs
+#    (lspci -vv reads the MSI-X table via the BAR, which can wedge the
+#    host if any AXI slave at the touched offset is hung).
 # -----------------------------------------------------------------------------
-echo "[$PROG] --- post-rescan lspci (Region/LnkSta) ---"
-lspci -vv -s "$BDF" 2>/dev/null | grep -E 'Region|LnkSta:' || true
+if [ "$SKIP_LSPCI" = 0 ]; then
+    echo "[$PROG] --- post-rescan lspci (Region/LnkSta) ---"
+    lspci -vv -s "$BDF" 2>/dev/null | grep -E 'Region|LnkSta:' || true
+else
+    info "--no-lspci set; skipping post-rescan lspci summary"
+fi
 
 info "Done.  Try 'python3 host/read_bitstream_info.py' to confirm BUILD_TIMESTAMP."
 exit 0
