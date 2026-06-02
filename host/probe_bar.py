@@ -128,59 +128,103 @@ def interp(v: int) -> str:
 # --------------------------------------------------------------------------
 
 PROBES = [
-    # Sysconfig sub-IPs that need firmware/clock init before responding.
-    # Hitting one of these from a cold-booted FPGA hangs the AXI bus,
-    # which surfaces to the host as PCIe completion timeout → AER fatal
-    # → kernel panic.  Gated by --dangerous.
+    # ------------------------------------------------------------------
+    # Sysconfig sub-IPs (axil_host_switch.M00 → system_config →
+    # internal xbar).  These need firmware/clock init before
+    # responding; hitting one cold-booted hangs the AXI bus, which
+    # surfaces to the host as PCIe completion timeout → AER fatal →
+    # kernel panic.  Gated by --dangerous.
+    # ------------------------------------------------------------------
     (0x0000_0000, "sysconfig:CMS subsystem",          True),
     (0x0004_0000, "sysconfig:QSPI flash",             True),
     (0x0006_0000, "sysconfig:SYSMON",                 True),
     (0x0007_0000, "sysconfig:HBICAP",                 True),
 
-    # scfg_reg — the only sysconfig sub-IP that's just an AXI-Lite
-    # register file with no internal CDC, so always safe to read.
+    # ------------------------------------------------------------------
+    # scfg_reg (axil_host_switch.M00 → system_config_axi_crossbar M00).
+    # Pure AXI-Lite register file with no internal CDC — always safe.
+    # ------------------------------------------------------------------
     (0x0005_0000, "scfg:REG_BUILD_TIMESTAMP",         False),
     (0x0005_0004, "scfg:REG_SYSTEM_RST",              False),
     (0x0005_0008, "scfg:REG_SYSTEM_STATUS",           False),
     (0x0005_001C, "scfg:REG_PR_CTRL",                 False),
 
-    # axil_host_switch.M02 — dynamic region (chip CSR FIFO + regmap).
-    # Goes through decoupler + cache_clk CDC + chip-side xbar.
-    (0x0008_0000, "dyn:chip CSR FIFO base",           False),
-    (0x0009_0000, "dyn:regmap reg #0",                False),
+    # ------------------------------------------------------------------
+    # Dynamic-region regmap (axil_host_switch.M01 →
+    # axi_lite_clock_converter_chip → axi_lite_switch_xbar.M01 →
+    # axi_lite_regmap).  Pure AXI-Lite register file behind the CDC,
+    # always responds (returns 0 for untouched regs, current value
+    # otherwise).
+    # ------------------------------------------------------------------
+    (0x0009_0000, "dyn:regmap reg #0 (default 0)",    False),
+    (0x0009_0008, "dyn:regmap reg #2 (SOFT_RESET)",   False),
     (0x0009_000C, "dyn:regmap reg #3 (R/W scratch)",  False),
 
-    # axil_host_switch.M01 + M03 — both tied off in pncel_static.
-    # Expected to DECERR cleanly with 0xDEC0DE_XX.
-    (0x000A_0000, "static_reg_map (tied off → DECERR)", False),
-    (0x000B_0000, "HBM APB stub  (tied off → DECERR)",  False),
+    # ------------------------------------------------------------------
+    # Chip CSR via FIFO (axil_host_switch.M01 →
+    # axi_lite_clock_converter_chip → axi_lite_switch_xbar.M00 →
+    # axi_lite_fifo → chip rx_cdc → chip cgra_io_csr).
+    #
+    # ONLY hits a CSR offset that the chip actually responds to —
+    # `0x80FF04` is REG_STATUS, populated regardless of kernel state.
+    # Other offsets in the FIFO aperture (0x80000-0x8FFFF) reach the
+    # chip but the chip won't respond to addresses without a CSR
+    # registered there → host AR hangs → PCIe completion timeout.
+    #
+    # The base offset `0x80000` (FIFO_BASE itself) is NOT a probe
+    # target: chip CSR offset 0x0000 has no register registered, so a
+    # read at 0x80000 hangs by design.  Use `0x80FF04` to exercise
+    # the FIFO/chip-CSR path.
+    # ------------------------------------------------------------------
+    (0x0008_FF04, "dyn:chip REG_STATUS via FIFO",     False),
 
-    # Outside any mapped region — also expected to DECERR cleanly.
-    (0x000C_0000, "unmapped within BAR (expect DEC0DE)", False),
-    (0x000F_0000, "unmapped within BAR (expect DEC0DE)", False),
+    # ------------------------------------------------------------------
+    # Outside any mapped SEG of axil_host_switch (now 1S→2M with
+    # M00=0x00000-0x7FFFF and M01=0x80000-0x9FFFF).  Reads hit the
+    # IP's internal default-slave → DECERR with rdata = 0xDEC0DE??.
+    # ------------------------------------------------------------------
+    (0x000A_0000, "unmapped (expect DECERR from axi_switch)", False),
+    (0x000C_0000, "unmapped (expect DECERR from axi_switch)", False),
+    (0x000F_0000, "unmapped (expect DECERR from axi_switch)", False),
 ]
 
 
 def cheatsheet() -> str:
     return """
-Interpretation cheatsheet:
-  * If 0x00050000 returns a non-FF value (BUILD_TIMESTAMP epoch or
-    0x01010000), the BAR + xdma m_axil + axil_host_switch + sysconfig
-    internal xbar are all working — your bitstream is healthy and the
-    BAR reads were failing for some other reason (stale driver mmap,
-    wrong /dev/xdma{N}_user, etc.).
-  * If 0x00050000 returns ffffffff but 0x00090000 also does, then either
-    XDMA's AXI-Lite master isn't issuing TLPs, or every slave behind the
-    host xbar is wedged.  Use the u_ila_xdma_axil ILA with trigger
-    arvalid==1 — if AR fires when you do `read32(0x00050000)`, the
-    problem is downstream; if not, the PCIe→AXI translation is dead.
-  * If 0x00050000 returns dec0de00, the AR reached an xbar but no MI
-    matched the address — the xbar's address ranges are stale (rebuild
-    the IP with the post-shrink TCL: `make clean && make project`).
-  * If 0x00050000 works but 0x00090000 returns ffffffff, the dynamic
-    region's decoupler is gating M02 or its cache_clk-bridged xbar is
-    dead.  Cross-check PR_CTRL at 0x0005001C — should be 0x00000000
-    after commit 0311371.
+Interpretation cheatsheet (axil_host_switch is 1S→2M:
+  M00 0x00000-0x7FFFF → system_config (sysconfig regs + sub-IPs)
+  M01 0x80000-0x9FFFF → dynamic region (FIFO + regmap)
+  anything else      → IP default-slave → DECERR (rdata = 0xDEC0DE??)):
+
+  * 0x00050000 (scfg:REG_BUILD_TIMESTAMP) — returns the epoch second of
+    the bitstream's most recent `make project`.  Anything that looks
+    like a 2021-2038 epoch means the BAR + xdma m_axil + host xbar M00
+    + sysconfig internal xbar are all healthy.  0xFFFFFFFF means the
+    M00 path is dead.
+
+  * 0x00090000 (dyn:regmap reg #0) — returns 0 by default.  If it
+    returns 0 the host xbar M01 + axi_lite_clock_converter_chip + chip-
+    side switch + regmap are all healthy.  0xFFFFFFFF means the M01
+    path is dead somewhere — capture ila_axil_xbar.probe5 to see if
+    arvalid even fires; if it does, then the CDC or chip-side switch is
+    the culprit.
+
+  * 0x0008FF04 (dyn:chip REG_STATUS via FIFO) — returns the chip's
+    current REG_STATUS value (usually 0 unless a kernel ran).  Tests
+    the full host → FIFO → chip rx_cdc → chip cgra_io_csr → chip
+    tx_cdc → host path.  0xFFFFFFFF means the chip-CSR packet
+    round-trip is broken (the chip is in reset, the rx/tx CDCs are
+    dead, or cgra_io_csr isn't responding).
+
+  * Any DECERR (rdata = 0xDEC0DE??) — the AR reached the host xbar
+    but no SEG matched, so the IP's internal default-slave answered
+    cleanly.  This is the GOOD failure mode for unmapped addresses;
+    it means the xbar is alive and routing.
+
+  * PR_CTRL at 0x0005001C should read 0x00000000 (commit 0311371).
+    If [1] is set (0x2), software has held the dynamic region in
+    reset; M01 reads will still complete via the regmap/FIFO IPs
+    (those are static-clock fabric) but the chip itself is frozen.
 """
 
 
