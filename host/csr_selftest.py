@@ -19,12 +19,8 @@ in dispatch (STATUS busy+dispatching, kernel never runs).
 
 This tool writes known patterns to the *read/write* CSRs (STARTPC, THREAD_COUNT,
 CSRX0, CSRX7 — never CTRL, so it never pulses START/reset) and reads them back to
-characterize the failure shape:
-
-  - 0/N on every offset, every pattern  -> writes never land (hard write-path break)
-  - some land, varies round-to-round    -> intermittent (CDC/race on the write channel)
-  - specific bits always drop (walk1)   -> data-lane / width problem
-  - one offset works, others don't      -> address-decode regression (FIFO_BASE/BAR/switch remap)
+characterize the failure shape.  It prints a one-line FINGERPRINT at the end that
+is easy to transcribe by hand.
 
 Usage
 -----
@@ -35,9 +31,12 @@ Usage
 """
 import argparse
 import sys
-from typing import List, Sequence, Tuple
+from typing import Dict, List, Sequence, Tuple
 
 from mini_dice import MiniDice
+
+# Short labels used in the type-back fingerprint, in this order.
+SHORT = {"STARTPC": "SP", "THREAD_COUNT": "TC", "CSRX0": "X0", "CSRX7": "X7"}
 
 
 def _patterns() -> List[Tuple[str, int]]:
@@ -49,17 +48,28 @@ def _patterns() -> List[Tuple[str, int]]:
     return walk1 + walk0 + seq + misc
 
 
-def selftest(md: MiniDice, offsets: Sequence[Tuple[str, int]], rounds: int) -> bool:
-    """Write each pattern to each R/W CSR and read it back.  Returns True iff
-    every write on every offset landed across all rounds."""
-    all_ok = True
+def selftest(md: MiniDice, offsets: Sequence[Tuple[str, int]], rounds: int):
+    """Write each pattern to each R/W CSR and read it back.
+
+    Returns (per_off, per_round, npats):
+      per_off[name]   = {landed, total, diff (OR of written^readback on misses),
+                         missrb (set of distinct readback values on misses)}
+      per_round[r]    = total writes that landed across all offsets in round r
+      npats           = patterns per offset per round
+    """
     pats = _patterns()
+    per_off: Dict[str, dict] = {
+        name: {"landed": 0, "total": 0, "diff": 0, "missrb": set()}
+        for name, _ in offsets
+    }
+    per_round: List[int] = []
     for rnd in range(rounds):
         if rounds > 1:
             print(f"=== round {rnd} ===")
+        round_landed = 0
         for name, off in offsets:
             landed = 0
-            diff_mask = 0  # OR of (written ^ readback) over the mismatching writes
+            diff_mask = 0
             for pname, v in pats:
                 md.csr_write(off, v)
                 rb = md.csr_read(off) & 0xFFFF
@@ -67,19 +77,73 @@ def selftest(md: MiniDice, offsets: Sequence[Tuple[str, int]], rounds: int) -> b
                     landed += 1
                 else:
                     diff_mask |= rb ^ (v & 0xFFFF)
+                    per_off[name]["missrb"].add(rb)
                     print(f"    {name:13s} off=0x{off:04x} {pname:9s} "
                           f"w=0x{v & 0xFFFF:04x} r=0x{rb:04x} DROP")
+            d = per_off[name]
+            d["landed"] += landed
+            d["total"] += len(pats)
+            d["diff"] |= diff_mask
+            round_landed += landed
             ok = landed == len(pats)
-            all_ok = all_ok and ok
-            extra = "" if ok else f"  (ever-differing bits = 0x{diff_mask:04x})"
+            extra = "" if ok else f"  diff=0x{diff_mask:04x}"
             print(f"  {name:13s} off=0x{off:04x}: {landed}/{len(pats)} landed{extra}")
-    return all_ok
+        per_round.append(round_landed)
+    return per_off, per_round, len(pats)
+
+
+def _verdict(per_off, per_round, npats, names) -> str:
+    total_all = sum(per_off[n]["total"] for n in names)
+    landed_all = sum(per_off[n]["landed"] for n in names)
+    miss_all = set().union(*(per_off[n]["missrb"] for n in names)) if names else set()
+    if landed_all == total_all:
+        return "PASS-write-ok"
+    if landed_all == 0:
+        return "HARD-readback0" if miss_all <= {0} else "HARD-drop-garbage"
+    full = [n for n in names if per_off[n]["landed"] == per_off[n]["total"]]
+    zero = [n for n in names if per_off[n]["landed"] == 0]
+    if full and zero:
+        return "OFFSET-addr-decode"
+    if len(set(per_round)) > 1:
+        return "INTERMITTENT-cdc-race"
+    diff_all = 0
+    for n in names:
+        diff_all |= per_off[n]["diff"]
+    if 0 < bin(diff_all).count("1") < 16:
+        return "BIT-data-lane"
+    return "PARTIAL-see-lines"
+
+
+def summarize(per_off, per_round, npats, names) -> bool:
+    """Print a one-line, hand-transcribable fingerprint. Returns overall pass."""
+    tot_each = per_off[names[0]]["total"] if names else 0
+    land_str = "/".join(str(per_off[n]["landed"]) for n in names)
+    order = "/".join(SHORT.get(n, n) for n in names)
+    miss_all = sorted(set().union(*(per_off[n]["missrb"] for n in names))) if names else []
+    if not miss_all:
+        rb_str = "none"
+    elif miss_all == [0]:
+        rb_str = "0000"
+    else:
+        rb_str = ",".join(f"{v:04x}" for v in miss_all[:4]) + ("+" if len(miss_all) > 4 else "")
+    diff_all = 0
+    for n in names:
+        diff_all |= per_off[n]["diff"]
+    rounds_str = ",".join(str(x) for x in per_round)
+    verdict = _verdict(per_off, per_round, npats, names)
+    ok = verdict == "PASS-write-ok"
+
+    print("\n==== TYPE THIS ONE LINE BACK ====")
+    print(f"CSRFP land[{order}]={land_str} of{tot_each} "
+          f"missrb={rb_str} rounds={rounds_str} diff={diff_all:04x} V={verdict}")
+    print("=================================")
+    return ok
 
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(
         description="Characterize the mini_dice chip CSR WRITE path "
-                    "(diagnoses the 'CSRs read back 0x0000 after write' HW failure).")
+                    "(diagnoses 'CSRs read back 0x0000 after write').")
     p.add_argument("--device-id", type=int, default=0,
                    help="XDMA device index (default: 0 -> /dev/xdma0_*).")
     p.add_argument("--rounds", type=int, default=1,
@@ -96,19 +160,18 @@ def main(argv=None) -> int:
             ("CSRX0", md.REG_CSRX_BASE + 0),
             ("CSRX7", md.REG_CSRX_BASE + 2 * 7),
         ]
-        ok = selftest(md, offsets, args.rounds)
+        names = [n for n, _ in offsets]
+        per_off, per_round, npats = selftest(md, offsets, args.rounds)
     finally:
         md.close()
 
-    print("\n========== CSR WRITE SELFTEST ==========")
-    if ok:
-        print("  PASS — every CSR write landed (write path healthy)")
-    else:
-        print("  FAIL — CSR writes dropped/corrupted. Read the shape:")
-        print("    0/N everywhere      -> hard write-path break")
-        print("    varies by round     -> intermittent (CDC/race on the write channel)")
-        print("    specific bits only  -> data-lane / width problem")
-        print("    one offset only     -> address-decode regression")
+    ok = summarize(per_off, per_round, npats, names)
+    # Legend so the fingerprint is self-explanatory when typed back.
+    print("legend: land=landed-per-offset[SP=STARTPC TC=THREAD_COUNT X0=CSRX0 X7=CSRX7];"
+          " missrb=readback value(s) on a miss; rounds=landed-per-round; diff=ever-differing bits.")
+    print("verdicts: HARD-readback0=all writes vanish->read 0 | HARD-drop-garbage=all drop, junk back |"
+          " OFFSET-addr-decode=some offsets ok some dead | INTERMITTENT-cdc-race=varies by round |"
+          " BIT-data-lane=specific bits drop | PASS-write-ok=healthy.")
     return 0 if ok else 1
 
 
