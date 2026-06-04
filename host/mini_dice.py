@@ -262,6 +262,26 @@ class MiniDice:
         self.csr_write(self.REG_THREAD_COUNT, thread_count)
         for i, v in enumerate(csr_values):
             self.csr_write(self.REG_CSRX_BASE + 2 * i, v)
+        if not self.mock:
+            # Verify the launch CSRs actually landed in the chip BEFORE START.
+            # The CSR WRITE path crosses the AXI-Lite CDC + axi_lite_fifo -> chip
+            # link; cosim injects these and may not exercise it.  A dropped
+            # STARTPC/THREAD_COUNT/CSRX leaves the dispatcher with garbage and
+            # wedges it (STATUS busy+dispatching, kernel never runs).  CSR reads
+            # are known-good on this path, so a write/read mismatch isolates the
+            # write direction specifically.
+            mism = []
+            checks = [("STARTPC", self.REG_STARTPC, start_pc),
+                      ("THREAD_COUNT", self.REG_THREAD_COUNT, thread_count)]
+            checks += [(f"CSRX{i}", self.REG_CSRX_BASE + 2 * i, v)
+                       for i, v in enumerate(csr_values)]
+            for nm, off, wrote in checks:
+                rb = self.csr_read(off) & 0xFFFF
+                if rb != (wrote & 0xFFFF):
+                    mism.append(f"{nm} w=0x{wrote & 0xFFFF:04x} r=0x{rb:04x}")
+            if mism:
+                print("  [WARN] launch CSR write-readback MISMATCH (CSR WRITE path "
+                      "dropping writes -> dispatcher will hang): " + "; ".join(mism))
         self.csr_write(self.REG_CTRL, self.CTRL_START)
         if self.mock:
             # Mock-only: simulate the chip's clear-on-start.
