@@ -53,11 +53,17 @@ class MiniDice:
     # -- Chip-side CSR offsets (all 16-bit registers, 2-byte stride) --------
     REG_CTRL          = 0xFF00  # bit 0 = START pulse, bit 1 = cgra_reset, bit 2 = bsload_en
     REG_STARTPC       = 0xFF02
-    REG_STATUS        = 0xFF04  # bit 0 = complete_sticky
+    REG_STATUS        = 0xFF04  # [0]complete [1]busy [2]dispatching [3]stack_overflow
+    REG_BSLOAD_CNT    = 0xFF06  # bitstream-load word counter (RO)
+    REG_STACK_DEPTH   = 0xFF08  # current SIMT stack depth (RO)
+    REG_ERROR_INFO    = 0xFF0A  # error address/code, sticky (RO)
     REG_THREAD_COUNT  = 0xFF0C
     REG_CSRX_BASE     = 0xFF10
     CTRL_START        = 0x0001
-    STATUS_COMPLETE   = 0x0001
+    STATUS_COMPLETE       = 0x0001
+    STATUS_BUSY           = 0x0002
+    STATUS_DISPATCHING    = 0x0004
+    STATUS_STACK_OVERFLOW = 0x0008
 
     def __init__(
         self,
@@ -217,6 +223,23 @@ class MiniDice:
         for x in range(max_chip_addr):
             struct.pack_into("<I", buf, 8 * x, x & 0xFFFF)
         self._h2c.write(self.BRAM_DMA_BASE + self.DATA_BRAM_OFF, bytes(buf))
+        # Verify the DATA (operand) region landed — same HW-only XDMA H2C
+        # transport as META/BS; the kernel reads its operands from here, so a
+        # mis-landed echo silently yields wrong compute results.  Skipped in
+        # mock (no real BRAM round-trip).
+        if not self.mock:
+            got = self._c2h.read(self.BRAM_DMA_BASE + self.DATA_BRAM_OFF, len(buf))
+            if got != bytes(buf):
+                n = min(len(got), len(buf))
+                i = next((k for k in range(n) if got[k] != buf[k]), n)
+                base = i & ~7
+                got_w = bytes(got[base:base + 8]).hex() if len(got) >= base + 8 else "<short>"
+                raise RuntimeError(
+                    f"DATA echo preload readback MISMATCH at byte 0x{i:x} "
+                    f"(chip_addr 0x{base // 8:x}): wrote {bytes(buf[base:base + 8]).hex()} "
+                    f"read {got_w}. The kernel will read wrong operands and "
+                    f"compute wrong results."
+                )
 
     # -- CTA launch + completion ------------------------------------------
 

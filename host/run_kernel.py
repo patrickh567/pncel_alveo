@@ -185,6 +185,70 @@ def read_back_writes(md: MiniDice, expected: Iterable[ExpectedWrite]) -> List[Ex
     return actual
 
 
+def _classify_writes(expected, actual, prelaunch):
+    """Disambiguate store failures: dropped store vs wrong computed value.
+
+    The host re-seeds every result slot with the echo pattern and reads the
+    SAME slots back, so a store that never landed reads back as its pre-launch
+    value -- indistinguishable from a wrong result by value alone.  Comparing
+    each slot to the baseline captured just before launch resolves it:
+      - == expected             -> correct
+      - unchanged from baseline  -> MISSING (store dropped/late, slot untouched)
+      - else                    -> WRONG (store landed with the wrong value)
+    Returns (correct, missing, wrong, ambiguous, per_addr_lines).
+    """
+    by_addr = {a.addr: (a.data & 0xFFFF) for a in actual}
+    correct = missing = wrong = ambig = 0
+    lines = []
+    for e in expected:
+        exp = e.data & 0xFFFF
+        got = by_addr.get(e.addr)
+        base = prelaunch.get(e.addr)
+        if got == exp:
+            correct += 1
+            continue
+        if base is not None and got == base and exp != base:
+            missing += 1
+            cls = "MISSING (store never landed; slot == pre-launch value)"
+        elif base is not None and got == base and exp == base:
+            ambig += 1
+            cls = "AMBIGUOUS (expected == pre-launch value)"
+        else:
+            wrong += 1
+            cls = "WRONG (store landed, wrong value)"
+        base_s = f"0x{base:04x}" if base is not None else "?"
+        got_s = f"0x{got:04x}" if got is not None else "?"
+        lines.append(
+            f"    addr=0x{e.addr:04x} exp=0x{exp:04x} got={got_s} pre={base_s}  {cls}"
+        )
+    return correct, missing, wrong, ambig, lines
+
+
+def _dump_hang_state(md, cta_idx) -> None:
+    """Snapshot the chip CSRs on a CTA timeout to localize the stall (no ILA).
+
+    Reads the live status/error registers while the chip is hung-busy (the
+    AXI-Lite read path is independent of the stalled compute):
+      STATUS[1]=busy/[2]=dispatching/[3]=stack_overflow, BSLOAD_CNT (did the
+      config image fully load?), SIMT_STACK_DEPTH (runaway divergence?),
+      ERROR_INFO (sticky error code).  A nonzero ERROR_INFO or set
+      stack_overflow points straight at the cause; dispatching stuck high means
+      it never left dispatch; a short BSLOAD_CNT means the config never finished.
+    """
+    st  = md.csr_read(md.REG_STATUS)
+    bsl = md.csr_read(md.REG_BSLOAD_CNT)
+    stk = md.csr_read(md.REG_STACK_DEPTH)
+    err = md.csr_read(md.REG_ERROR_INFO)
+    flags = []
+    if st & md.STATUS_COMPLETE:       flags.append("complete")
+    if st & md.STATUS_BUSY:           flags.append("busy")
+    if st & md.STATUS_DISPATCHING:    flags.append("dispatching")
+    if st & md.STATUS_STACK_OVERFLOW: flags.append("STACK_OVERFLOW")
+    print(f"  [hang] CTA {cta_idx} STATUS=0x{st:04x} [{','.join(flags) or 'idle'}]  "
+          f"bsload_cnt=0x{bsl:04x}  simt_stack_depth=0x{stk:04x}  "
+          f"error_info=0x{err:04x}")
+
+
 # ---------------------------------------------------------------------------
 # Per-vector runner
 # ---------------------------------------------------------------------------
@@ -200,6 +264,7 @@ def run_test(
     cosim_timeout_s: float = 60.0,
     verbose: bool = False,
     per_cta_timeout_s: float = 5.0,
+    poll_interval_s: float = 1e-4,
     md: Optional[MiniDice] = None,
 ) -> bool:
     """Run one test vector.
@@ -252,6 +317,15 @@ def run_test(
                 tag = "OK" if got == x else "MISMATCH"
                 print(f"  [preload-sanity] chip_addr=0x{x:04x} echo expected=0x{x:04x} actual=0x{got:04x}  {tag}")
 
+        # Capture each result slot's value BEFORE launch so post-run mismatches
+        # can be classified as a dropped/late store (slot unchanged) vs a wrong
+        # computed value.  The result region IS the echo-seeded DATA region, so
+        # without this baseline a never-written slot aliases to a "wrong result".
+        prelaunch = {}
+        if not mock:
+            prelaunch = {e.addr: md.bram_read_data_word(e.addr) & 0xFFFF
+                         for e in rt.expected_writes}
+
         # In mock mode we'd be writing the echo pattern into a dict that
         # already holds the chip writes from prior CTAs (since launch is
         # a no-op).  Skip the read-back in mock mode and just confirm the
@@ -261,8 +335,21 @@ def run_test(
             if verbose:
                 print(f"  CTA {cta_idx}: launching with csrs={csrs}")
             md.launch_cta(desc.start_pc, desc.thread_count, csrs)
-            elapsed_s = md.wait_for_cta_done(timeout_s=per_cta_timeout_s)
-            print(f"  CTA {cta_idx} complete in {elapsed_s * 1e3:.2f} ms")
+            try:
+                elapsed_s = md.wait_for_cta_done(
+                    timeout_s=per_cta_timeout_s, poll_interval_s=poll_interval_s)
+                print(f"  CTA {cta_idx} complete in {elapsed_s * 1e3:.2f} ms")
+            except TimeoutError as ex:
+                print(f"  CTA {cta_idx} TIMEOUT after {per_cta_timeout_s}s: {ex}")
+                _dump_hang_state(md, cta_idx)
+                if not mock:
+                    # How far did the stores get before the hang?
+                    actual = read_back_writes(md, rt.expected_writes)
+                    cw, miss, wr, amb, _ = _classify_writes(
+                        rt.expected_writes, actual, prelaunch)
+                    print(f"  [hang-diag] partial stores: {cw} correct / {miss} MISSING"
+                          f" / {wr} WRONG / {amb} ambiguous (of {len(rt.expected_writes)})")
+                return False
 
         if mock:
             # Mock can't reproduce real chip outputs.  We've verified
@@ -275,6 +362,14 @@ def run_test(
         result = check(actual, rt.expected_writes)
         if verbose or not result.ok:
             print(result.report)
+            # Resolve the re-seed aliasing: split mismatches into dropped stores
+            # (slot unchanged from pre-launch) vs genuinely wrong computed values.
+            cw, miss, wr, amb, lines = _classify_writes(
+                rt.expected_writes, actual, prelaunch)
+            print(f"  [diag] {cw} correct / {miss} MISSING-store / {wr} WRONG-value"
+                  f" / {amb} ambiguous  (of {len(rt.expected_writes)} expected)")
+            for ln in lines[:32]:
+                print(ln)
         else:
             print(f"[HOST] PASS: {result.matched}/{result.expected_total} expected "
                   "writes matched")
@@ -314,6 +409,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p.add_argument("--per-cta-timeout-s", type=float, default=300.0,
                    help="Per-CTA wait_for_cta_done timeout in seconds "
                         "(default: 300.0 — cosim wall time can be slow).")
+    p.add_argument("--poll-interval-s", type=float, default=1e-4,
+                   help="REG_STATUS poll interval in seconds (default: 1e-4 = "
+                        "100us). Each poll injects an AXI-Lite read whose response "
+                        "shares the chip's single TX link with its memory requests; "
+                        "raise this (e.g. 0.1) to test whether aggressive polling "
+                        "head-of-line blocks the link and induces the hang.")
     args = p.parse_args(argv)
 
     if args.mock and args.cosim:
@@ -346,6 +447,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     cosim_timeout_s=args.cosim_timeout_s,
                     verbose=args.verbose,
                     per_cta_timeout_s=args.per_cta_timeout_s,
+                    poll_interval_s=args.poll_interval_s,
                     md=shared_md,
                 )
             except Exception as exc:
