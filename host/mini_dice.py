@@ -172,6 +172,16 @@ class MiniDice:
         addr = self.BRAM_DMA_BASE + self.BS_BRAM_OFF + chip_addr
         self._h2c.write(addr, data)
 
+    def bram_read_meta(self, chip_addr: int, nbytes: int) -> bytes:
+        """Read `nbytes` back from the META (mfetch) BRAM region via c2h."""
+        addr = self.BRAM_DMA_BASE + self.META_BRAM_OFF + chip_addr
+        return self._c2h.read(addr, nbytes)
+
+    def bram_read_bs(self, chip_addr: int, nbytes: int) -> bytes:
+        """Read `nbytes` back from the BS (bsfetch) BRAM region via c2h."""
+        addr = self.BRAM_DMA_BASE + self.BS_BRAM_OFF + chip_addr
+        return self._c2h.read(addr, nbytes)
+
     def bram_write_data_word(self, chip_addr: int, value: int) -> None:
         """Write a 32-bit value into the chip dfetch slot for `chip_addr`.
 

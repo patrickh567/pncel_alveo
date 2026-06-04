@@ -106,6 +106,35 @@ DEFAULT_TESTS = [
 # Preload helpers
 # ---------------------------------------------------------------------------
 
+def _verify_region(md: MiniDice, label: str, read_fn, expected: bytes) -> None:
+    """Read a just-preloaded BRAM region back and diff against the source image.
+
+    The META (instruction/metadata) and BS (config) images are DMA'd through
+    the real XDMA H2C engine on hardware — a path cosim never exercises (the
+    cosim TB injects directly onto axi_dma).  If the preload mis-lands, the chip
+    fetches garbage and spins forever (REG_STATUS pinned 0x0002 = busy/!complete)
+    with no other symptom.  This unconditional readback turns that silent hang
+    into an explicit abort.  Skipped in mock mode (no real BRAM round-trip).
+    """
+    if getattr(md, "mock", False):
+        return
+    got = read_fn(0, len(expected))
+    if got == expected:
+        return
+    n = min(len(got), len(expected))
+    i = next((k for k in range(n) if got[k] != expected[k]), n)
+    base = i & ~3
+    exp_w = expected[base:base + 4].hex()
+    got_w = got[base:base + 4].hex() if len(got) >= base + 4 else "<short>"
+    raise RuntimeError(
+        f"{label} preload readback MISMATCH at byte 0x{i:x} "
+        f"(wrote {len(expected)} B, read {len(got)} B): "
+        f"expected word=0x{exp_w} got=0x{got_w}. The chip would fetch a wrong "
+        f"{label} image and hang busy. Suspect the XDMA H2C -> axi_dma_switch.M02 "
+        f"-> s_axi_hbm -> HBM-CDC -> crossbar SI[1] -> BRAM preload path."
+    )
+
+
 def preload_meta(md: MiniDice, meta_words: dict, max_byte: int = 0x4000) -> None:
     """DMA the meta image into BRAM at the META region offsets.
 
@@ -122,6 +151,7 @@ def preload_meta(md: MiniDice, meta_words: dict, max_byte: int = 0x4000) -> None
         word = meta_read32(meta_words, byte_addr)
         buf += word.to_bytes(4, "little")
     md.bram_write_meta(chip_addr=0, data=bytes(buf))
+    _verify_region(md, "META", md.bram_read_meta, bytes(buf))
 
 
 def preload_bs(md: MiniDice, bs_words: dict, max_byte: int = 0x4000) -> None:
@@ -135,6 +165,7 @@ def preload_bs(md: MiniDice, bs_words: dict, max_byte: int = 0x4000) -> None:
         word = bitstream_read32(bs_words, byte_addr)
         buf += word.to_bytes(4, "little")
     md.bram_write_bs(chip_addr=0, data=bytes(buf))
+    _verify_region(md, "BS", md.bram_read_bs, bytes(buf))
 
 
 def read_back_writes(md: MiniDice, expected: Iterable[ExpectedWrite]) -> List[ExpectedWrite]:
