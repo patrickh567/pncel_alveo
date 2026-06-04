@@ -114,9 +114,11 @@ def _verify_region(md: MiniDice, label: str, read_fn, expected: bytes) -> None:
     cosim TB injects directly onto axi_dma).  If the preload mis-lands, the chip
     fetches garbage and spins forever (REG_STATUS pinned 0x0002 = busy/!complete)
     with no other symptom.  This unconditional readback turns that silent hang
-    into an explicit abort.  Skipped in mock mode (no real BRAM round-trip).
+    into an explicit abort.  Skipped in mock AND cosim (the cosim bridge's c2h
+    DMA read-back of BRAM is not byte-faithful, so it would false-positive even
+    though the chip preload is correct — this check is for real silicon only).
     """
-    if getattr(md, "mock", False):
+    if getattr(md, "mock", False) or getattr(md, "cosim", False):
         return
     got = read_fn(0, len(expected))
     if got == expected:

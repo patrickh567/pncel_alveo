@@ -19,8 +19,8 @@ All address constants are derived directly from:
   /data2/pdh4/pncel_alveo/src/utility/vivado_ip/axil_host_switch.tcl
       M02 SEG00 = 0x0008_0000 (axi_lite_fifo aperture, 1 MB BAR layout)
   ~/repos/Mini_Dice_Backend/Mini_Dice/rtl/cgra_core/internal_memory/cgra_io_csr.sv
-      REG_CTRL = 0xFF00, REG_STARTPC = 0xFF02, REG_STATUS = 0xFF04,
-      REG_THREAD_COUNT = 0xFF0C, REG_CSRX0..7 = 0xFF10..0xFF1E
+      4-byte (word-aligned) stride: REG_CTRL=0xFF00, REG_STARTPC=0xFF04,
+      REG_STATUS=0xFF08, REG_THREAD_COUNT=0xFF18, REG_CSRX0..7=0xFF20..0xFF3C
 """
 
 from __future__ import annotations
@@ -50,15 +50,19 @@ class MiniDice:
     BS_BRAM_OFF   = 0x4000   # chip bsfetch addr X → BRAM byte X + 0x4000
     DATA_BRAM_OFF = 0x8000   # chip dfetch addr X → BRAM byte 8X + 0x8000
 
-    # -- Chip-side CSR offsets (all 16-bit registers, 2-byte stride) --------
-    REG_CTRL          = 0xFF00  # bit 0 = START pulse, bit 1 = cgra_reset, bit 2 = bsload_en
-    REG_STARTPC       = 0xFF02
-    REG_STATUS        = 0xFF04  # [0]complete [1]busy [2]dispatching [3]stack_overflow
-    REG_BSLOAD_CNT    = 0xFF06  # bitstream-load word counter (RO)
-    REG_STACK_DEPTH   = 0xFF08  # current SIMT stack depth (RO)
-    REG_ERROR_INFO    = 0xFF0A  # error address/code, sticky (RO)
-    REG_THREAD_COUNT  = 0xFF0C
-    REG_CSRX_BASE     = 0xFF10
+    # -- Chip-side CSR offsets (16-bit registers, 4-byte/word-aligned stride) --
+    # Stride is 4, not 2: each reg occupies its own 32-bit AXI-Lite word so a
+    # host 32-bit BAR write always lands the value in w.data[15:0].  With the
+    # old 2-byte stride, odd-index regs lived in the upper half-word and the
+    # XDMA 32-bit AXI-Lite master dropped them (see cgra_io_csr.sv addr[5:2]).
+    REG_CTRL          = 0xFF00  # idx0: bit0=START, bit1=cgra_reset, bit2=bsload_en
+    REG_STARTPC       = 0xFF04  # idx1
+    REG_STATUS        = 0xFF08  # idx2: [0]complete [1]busy [2]dispatching [3]stack_overflow
+    REG_BSLOAD_CNT    = 0xFF0C  # idx3: bitstream-load word counter (RO)
+    REG_STACK_DEPTH   = 0xFF10  # idx4: current SIMT stack depth (RO)
+    REG_ERROR_INFO    = 0xFF14  # idx5: error address/code, sticky (RO)
+    REG_THREAD_COUNT  = 0xFF18  # idx6
+    REG_CSRX_BASE     = 0xFF20  # idx8 (CSRX0); CSRX stride = 4 bytes
     CTRL_START        = 0x0001
     STATUS_COMPLETE       = 0x0001
     STATUS_BUSY           = 0x0002
@@ -78,6 +82,11 @@ class MiniDice:
         self._h2c = h2c
         self._c2h = c2h
         self.mock = mock
+        # True when driving a VCS cosim bridge (not real silicon).  The cosim
+        # bridge's c2h DMA read-back of BRAM is not byte-faithful, so the
+        # HW-only BRAM-region preload checks (META/BS/DATA) must be skipped here
+        # to avoid false mismatches; the CSR read/write path IS faithful.
+        self.cosim = isinstance(c2h, XdmaCosimC2H)
         self.verbose = verbose
 
     # -- Convenience constructor -------------------------------------------
@@ -227,7 +236,7 @@ class MiniDice:
         # transport as META/BS; the kernel reads its operands from here, so a
         # mis-landed echo silently yields wrong compute results.  Skipped in
         # mock (no real BRAM round-trip).
-        if not self.mock:
+        if not self.mock and not self.cosim:
             got = self._c2h.read(self.BRAM_DMA_BASE + self.DATA_BRAM_OFF, len(buf))
             if got != bytes(buf):
                 n = min(len(got), len(buf))
@@ -261,19 +270,22 @@ class MiniDice:
         self.csr_write(self.REG_STARTPC, start_pc)
         self.csr_write(self.REG_THREAD_COUNT, thread_count)
         for i, v in enumerate(csr_values):
-            self.csr_write(self.REG_CSRX_BASE + 2 * i, v)
-        if not self.mock:
+            self.csr_write(self.REG_CSRX_BASE + 4 * i, v)
+        if not self.mock and not self.cosim:
             # Verify the launch CSRs actually landed in the chip BEFORE START.
-            # The CSR WRITE path crosses the AXI-Lite CDC + axi_lite_fifo -> chip
-            # link; cosim injects these and may not exercise it.  A dropped
-            # STARTPC/THREAD_COUNT/CSRX leaves the dispatcher with garbage and
-            # wedges it (STATUS busy+dispatching, kernel never runs).  CSR reads
+            # HW-only: real PCIe orders the readback after the posted write, so a
+            # mismatch is a genuine dropped write; the cosim socket bridge does
+            # NOT order write-before-read, so it would false-positive (the kernel
+            # still runs correctly).  The CSR WRITE path crosses the AXI-Lite CDC
+            # + axi_lite_fifo -> chip link; a dropped STARTPC/THREAD_COUNT/CSRX
+            # leaves the dispatcher with garbage and wedges it (busy+dispatching).
+            # CSR reads
             # are known-good on this path, so a write/read mismatch isolates the
             # write direction specifically.
             mism = []
             checks = [("STARTPC", self.REG_STARTPC, start_pc),
                       ("THREAD_COUNT", self.REG_THREAD_COUNT, thread_count)]
-            checks += [(f"CSRX{i}", self.REG_CSRX_BASE + 2 * i, v)
+            checks += [(f"CSRX{i}", self.REG_CSRX_BASE + 4 * i, v)
                        for i, v in enumerate(csr_values)]
             for nm, off, wrote in checks:
                 rb = self.csr_read(off) & 0xFFFF

@@ -158,7 +158,7 @@ def main(argv=None) -> int:
             ("STARTPC", md.REG_STARTPC),
             ("THREAD_COUNT", md.REG_THREAD_COUNT),
             ("CSRX0", md.REG_CSRX_BASE + 0),
-            ("CSRX7", md.REG_CSRX_BASE + 2 * 7),
+            ("CSRX7", md.REG_CSRX_BASE + 4 * 7),
         ]
         names = [n for n, _ in offsets]
         per_off, per_round, npats = selftest(md, offsets, args.rounds)
